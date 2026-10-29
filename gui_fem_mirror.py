@@ -24,39 +24,26 @@ _LOGO_B64 = (
 #  UTILIDADES DE VISUALIZACIÓN
 # ═══════════════════════════════════════════════════════════════════
 
-def _draw_aperture_boundary(ax, aperture, cx, cy, xc_all, yc_all, params):
-    """
-    Dibuja el contorno de la apertura (línea amarilla discontinua) sobre 'ax'.
+# Aperturas de la GUI → nombre interno en fem_mirror_analysis
+APERTURE_KEYS = {'Circular': 'circular', 'Rectangular': 'rectangular',
+                 'Anular': 'annular', 'Hexagonal': 'hexagonal'}
+APERTURES_ENABLED = ('Circular', 'Rectangular')
+APERTURES_DISABLED = ('Anular', 'Hexagonal')      # pendientes de implementar
 
-    cx, cy       : centroide de los nodos en coordenadas originales
-    xc_all, yc_all : coordenadas centradas de TODOS los nodos (para auto-radio)
+
+def _draw_aperture_boundary(ax, geom):
     """
-    import numpy as np
+    Dibuja el contorno de la apertura (línea amarilla discontinua) sobre 'ax'
+    usando la geometría devuelta por fem_mirror_analysis.apply_aperture.
+    """
     import matplotlib.patches as mpatches
 
-    kw_line   = dict(color='gold', lw=1.5, ls='--', zorder=5)
-    kw_patch  = dict(edgecolor='gold', facecolor='none', lw=1.5, ls='--', zorder=5)
-
-    if aperture == 'Circular':
-        r = float(params['radius']) if params.get('radius') else np.hypot(xc_all, yc_all).max()
-        ax.add_patch(mpatches.Circle((cx, cy), r, **kw_patch))
-
-    elif aperture == 'Hexagonal':
-        R = float(params['hexradius']) if params.get('hexradius') else np.hypot(xc_all, yc_all).max()
-        # Hexágono regular con vértice apuntando a la derecha (ángulo 0)
-        angles = [k * (2 * 3.14159265 / 6) for k in range(7)]
-        hx = [cx + R * __import__('math').cos(a) for a in angles]
-        hy = [cy + R * __import__('math').sin(a) for a in angles]
-        ax.plot(hx, hy, **kw_line)
-
-    elif aperture == 'Cuadrada':
-        side = float(params['side']) if params.get('side') else 2.0 * max(float(np.abs(xc_all).max()), float(np.abs(yc_all).max()))
-        half = side / 2.0
-        ax.add_patch(mpatches.Rectangle((cx - half, cy - half), side, side, **kw_patch))
-
-    elif aperture == 'Rectangular':
-        w = float(params['width'])  if params.get('width')  else 2.0 * float(np.abs(xc_all).max())
-        h = float(params['height']) if params.get('height') else 2.0 * float(np.abs(yc_all).max())
+    kw_patch = dict(edgecolor='gold', facecolor='none', lw=1.5, ls='--', zorder=5)
+    cx, cy = geom['center']
+    if geom['type'] == 'circular':
+        ax.add_patch(mpatches.Circle((cx, cy), geom['radius'], **kw_patch))
+    elif geom['type'] == 'rectangular':
+        w, h = geom['width'], geom['height']
         ax.add_patch(mpatches.Rectangle((cx - w / 2, cy - h / 2), w, h, **kw_patch))
 
 
@@ -88,8 +75,30 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
 
         # ── 1. Cargar datos ─────────────────────────────────────────────
         log("Cargando datos FEM…\n")
-        _, coor, disp = m.load_fem_data(params['fname'])
-        log(f"  {len(coor):,} nodos leídos.\n\n")
+        _, coor, disp = m.load_fem_data(params['fname'], params.get('case'))
+        if params.get('case') is not None:
+            log(f"  Caso de carga: {params['case']:g}\n")
+        log(f"  {len(coor):,} nodos leídos.\n")
+        ndup = m.check_duplicates(coor)
+        if ndup:
+            log(f"  ⚠ {ndup:,} nodos con XY repetidas: quedan fuera de la "
+                f"triangulación y se excluyen.\n")
+
+        # ── 1b. Sistema de referencia ───────────────────────────────────
+        import math as _m
+        nbf = m.compute_bestfit_normal(coor)
+        tilt = _m.degrees(_m.acos(min(1.0, float(nbf[2]))))
+        log(f"  Normal plano best-fit: ({nbf[0]:+.5f}, {nbf[1]:+.5f}, {nbf[2]:+.5f})"
+            f" → {tilt:.4f}° respecto a Z\n")
+        if params['frame'] == 'bestfit':
+            coor, disp, _ = m.to_local_frame(coor, disp)
+            log("  Sistema: plano best-fit (datos girados; Tx..Rz en ese sistema).\n\n")
+        else:
+            log("  Sistema: global (Z = eje óptico).\n")
+            if tilt > 1.0:
+                log("  ⚠ La superficie está inclinada respecto a Z. Si es plana o Z no es "
+                    "el eje óptico, usa 'Plano best-fit'.\n")
+            log("\n")
 
         # ── 2. Extraer sólido rígido ─────────────────────────────────────
         rigid = params['rigid']
@@ -100,6 +109,9 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
             log("No se eliminan modos de sólido rígido.\n")
 
         un, an, pos = m.extract_rigid(coor, disp, rigid)
+        nbad = int(np.sum(~np.isfinite(un)))
+        if nbad:
+            log(f"  ⚠ {nbad:,} nodos sin área en la triangulación (excluidos).\n")
 
         labels = ['Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz']
         for i, lbl in enumerate(labels):
@@ -109,59 +121,55 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
         rms_total = m.rms_area_weighted(un, an)
         pv_total  = m.peak_to_valley(un)
         log(f"\nRMS desplazamiento normal : {rms_total:.6e}\n")
+        log(f"RMS resp. media (std)     : {m.std_area_weighted(un, an):.6e}\n")
         log(f"Peak-to-valley            : {pv_total:.6e}\n")
 
         # ── 3. Máscara de apertura ───────────────────────────────────────
         aperture = params['aperture']
+        ap_key   = APERTURE_KEYS[aperture]
         xy = coor[:, :2]
 
         log(f"\nCalculando apertura '{aperture}'…\n")
-        if aperture == 'Circular':
-            kw = {}
-            if params.get('radius'): kw['radius'] = float(params['radius'])
-            mask, r_norm, theta = m.aperture_circular(xy, **kw)
-        elif aperture == 'Hexagonal':
-            kw = {}
-            if params.get('hexradius'): kw['circumradius'] = float(params['hexradius'])
-            mask, r_norm, theta = m.aperture_hexagonal(xy, **kw)
-        elif aperture == 'Cuadrada':
-            kw = {}
-            if params.get('side'): kw['side'] = float(params['side'])
-            mask, r_norm, theta = m.aperture_square(xy, **kw)
-        elif aperture == 'Rectangular':
-            kw = {}
-            if params.get('width'):  kw['width']  = float(params['width'])
-            if params.get('height'): kw['height'] = float(params['height'])
-            mask, r_norm, theta = m.aperture_rectangular(xy, **kw)
-
+        _f = lambda k: float(params[k]) if params.get(k) else None
+        center = None
+        if params.get('cx') and params.get('cy'):
+            center = (float(params['cx']), float(params['cy']))
+        mask, coords, geom = m.apply_aperture(
+            xy, un, an, ap_key, radius=_f('radius'), width=_f('width'),
+            height=_f('height'), center=center)
+        log(f"  Centro ({'usuario' if center else 'centroide de área'}): "
+            f"({geom['center'][0]:.5g}, {geom['center'][1]:.5g})\n")
+        if geom['type'] == 'circular':
+            log(f"  Radio de normalización: {geom['radius']:.6g}\n")
+        else:
+            log(f"  Anchura × altura: {geom['width']:.6g} × {geom['height']:.6g}\n")
         log(f"  {mask.sum():,} nodos dentro de la apertura.\n")
 
-        # ── 4. Ajuste de Zernike ─────────────────────────────────────────
+        # ── 4. Ajuste polinómico ─────────────────────────────────────────
         nterms   = params['nterms']
         norm     = params['norm']
+        basis    = m.basis_key(ap_key, params['convention'])
+        fam      = ('Chebyshev 2D' if basis == 'chebyshev'
+                    else f"Zernike {basis.capitalize()}")
         un_ap    = un[mask]
         an_ap    = an[mask]
         an_ap    = an_ap / an_ap.sum()
         residual = un_ap.copy()   # si no hay ajuste, residuo = señal
 
         if nterms > 0:
-            log(f"\nAjustando {nterms} polinomios de Zernike (norma '{norm}')…\n")
-            term_indices = list(range(nterms))
-            coeffs, residual, _ = m.zernike_fit_scatter(
-                un_ap, r_norm, theta, terms=term_indices, norm=norm
-            )
+            metodo = 'WLS ponderado por área' if params['wls'] else 'LS ordinario'
+            log(f"\nAjustando {nterms} términos {fam} ({metodo}, norma '{norm}')…\n")
+            term_indices = m.default_terms(basis, nterms)
+            coeffs, residual, _ = m.fit_surface(
+                un_ap, coords, basis, term_indices, norm,
+                weights=an_ap if params['wls'] else None)
             rms_res = m.rms_area_weighted(residual, an_ap)
             pv_res  = m.peak_to_valley(residual)
             log(f"  RMS residuo : {rms_res:.6e}\n")
-            log(f"  PV  residuo : {pv_res:.6e}\n")
-
-            n_arr, m_arr = m.zernike_iso2nm(nterms)
-            log(f"\n{'─'*44}\n")
-            log(f"  {'Z':>3}  {'n':>3}  {'m':>4}   Coeficiente\n")
-            log(f"{'─'*44}\n")
-            for i, c in enumerate(coeffs):
-                log(f"  Z{i:<3d}  {n_arr[i]:>3}  {m_arr[i]:>+4}   {c:+.6e}\n")
-            log(f"{'─'*44}\n")
+            log(f"  std residuo : {m.std_area_weighted(residual, an_ap):.6e}\n")
+            log(f"  PV  residuo : {pv_res:.6e}\n\n")
+            log("\n".join(m.format_fit_table(basis, term_indices, coeffs)) + "\n")
+            log("  (SurfCalc # = índice 1-based en la convención elegida)\n")
         else:
             rms_res = m.rms_area_weighted(residual, an_ap)
             pv_res  = m.peak_to_valley(residual)
@@ -216,10 +224,10 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                 if valid.sum() > 3:
                     tri_ap = mtri.Triangulation(x[valid], y[valid])
                     cf2 = axes[1].tricontourf(tri_ap, un_res_full[valid], levels=64, cmap='gist_rainbow')
-                    plt.colorbar(cf2, ax=axes[1], label='Residuo Zernike')
+                    plt.colorbar(cf2, ax=axes[1], label=f'Residuo {fam}')
 
                     # Interpolador para mostrar valor z al pasar el ratón (panel 1)
-                    _label1 = 'Residuo Zernike' if nterms > 0 else 'Despl. normal (apertura)'
+                    _label1 = f'Residuo {fam}' if nterms > 0 else 'Despl. normal (apertura)'
                     _interp1 = mtri.LinearTriInterpolator(tri_ap, un_res_full[valid])
                     def _fmt1(xm, ym, _i=_interp1, _l=_label1):
                         zv = float(_i(xm, ym))
@@ -227,7 +235,7 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                         return f'X={xm:.4f}  Y={ym:.4f}  {_l}={zs}'
                     axes[1].format_coord = _fmt1
 
-                title2 = (f'Residuo Zernike ({nterms} términos)\napertura {aperture}'
+                title2 = (f'Residuo {fam} ({nterms} términos)\napertura {aperture}'
                           if nterms > 0 else f'Apertura {aperture}')
                 axes[1].set_title(
                     f'{title2}\nRMS = {rms_res:.3e}   PV = {pv_res:.3e}',
@@ -273,7 +281,7 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                 im_psf = axes[2].imshow(psf_log, origin='lower', cmap='inferno',
                                         extent=[-crop, crop, -crop, crop])
                 plt.colorbar(im_psf, ax=axes[2], label='log₁₀(PSF norm.)')
-                axes[2].set_title('PSF simulada\n(residuo Zernike → difracción)')
+                axes[2].set_title('PSF simulada (forma, escala arbitraria)\n(residuo → difracción)')
                 axes[2].set_xlabel('píxeles FFT')
                 axes[2].set_ylabel('píxeles FFT')
 
@@ -295,7 +303,6 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
 
                 # ── Casco convexo de los datos FEM reales (línea blanca) ──────
                 from scipy.spatial import ConvexHull
-                import math as _math
                 valid_pts = np_local.column_stack([x[valid_full], y[valid_full]])
                 try:
                     hull = ConvexHull(valid_pts)
@@ -306,40 +313,19 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                                 'w-', lw=1.4, alpha=0.85, zorder=4,
                                 label='Límite datos FEM')
                     # Fracción de la apertura teórica cubierta por los datos
-                    area_data = hull.volume   # en 2D, .volume == área
-                    if aperture == 'Circular':
-                        R_ap = float(params['radius']) if params.get('radius') \
-                               else np_local.hypot(xc_all, yc_all).max()
-                        area_ap = _math.pi * R_ap ** 2
-                    elif aperture == 'Hexagonal':
-                        R_ap = float(params['hexradius']) if params.get('hexradius') \
-                               else np_local.hypot(xc_all, yc_all).max()
-                        area_ap = (3 * _math.sqrt(3) / 2) * R_ap ** 2
-                    elif aperture == 'Cuadrada':
-                        side = float(params['side']) if params.get('side') \
-                               else 2.0 * max(float(np_local.abs(xc_all).max()),
-                                              float(np_local.abs(yc_all).max()))
-                        area_ap = side ** 2
-                    elif aperture == 'Rectangular':
-                        w = float(params['width'])  if params.get('width')  \
-                            else 2.0 * float(np_local.abs(xc_all).max())
-                        h = float(params['height']) if params.get('height') \
-                            else 2.0 * float(np_local.abs(yc_all).max())
-                        area_ap = w * h
-                    else:
-                        area_ap = None
-                    if area_ap:
-                        pct = 100.0 * area_data / area_ap
+                    cov = m.mesh_coverage(xy, an, geom)
+                    if cov is not None:
+                        pct = 100.0 * cov
                         schedule(0, lambda p=pct: log(
                             f"\n  ℹ Los datos FEM cubren ~{p:.0f}% del área de la apertura.\n"
-                            + ("    El modelo FEM parece ser un modelo parcial (simetría reducida).\n"
-                               if p < 82 else "")))
+                            + ("    Parece un modelo parcial (simetría): revisa el centro "
+                               "y el tamaño de la apertura.\n" if p < 82 else "")))
                 except Exception:
                     pass   # si hay < 3 puntos válidos, ConvexHull falla — ignorar
 
                 # ── Contorno de apertura teórica (línea amarilla discontinua) ──
-                _draw_aperture_boundary(axes[0], aperture, cx, cy, xc_all, yc_all, params)
-                _draw_aperture_boundary(axes[1], aperture, cx, cy, xc_all, yc_all, params)
+                _draw_aperture_boundary(axes[0], geom)
+                _draw_aperture_boundary(axes[1], geom)
 
                 # ── Leyenda (solo paneles de superficie) ─────────────────────
                 import matplotlib.lines as mlines
@@ -359,6 +345,7 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                         'y':        y,
                         'z_res':    un_res_full,
                         'valid':    valid,
+                        'fam':      fam,
                         'rms_res':  rms_res,
                         'pv_res':   pv_res,
                         'nterms':   nterms,
@@ -431,20 +418,32 @@ class App(tk.Tk):
         except Exception:
             pass   # si el entorno no soporta PhotoImage con data=, continúa sin logo
 
+        # Caso de carga (ficheros con varios casos apilados)
+        frm_case = ttk.Frame(frm_file)
+        frm_case.grid(row=1, column=0, columnspan=2, padx=6, pady=(0, 4), sticky='w')
+        ttk.Label(frm_case, text="Caso de carga:").grid(row=0, column=0, padx=(0, 4))
+        self.case_var = tk.StringVar(value='')
+        self.cb_case = ttk.Combobox(frm_case, textvariable=self.case_var,
+                                    width=8, state='disabled', values=[])
+        self.cb_case.grid(row=0, column=1)
+        self.lbl_case = ttk.Label(frm_case, text="(fichero con un único caso)",
+                                  foreground='gray')
+        self.lbl_case.grid(row=0, column=2, padx=6)
+
         # Nota de formato del fichero TXT
         _fmt_text = (
-            "Formato TXT: una línea por nodo  →  node_id   X   Y   Z   dX   dY   dZ\n"
-            "Las columnas deben estar separadas por espacios o tabuladores. "
-            "Se ignoran las líneas que empiecen por '#'.\n"
-            "El eje Z debe ser el eje óptico (normal al espejo). "
-            "El origen de coordenadas puede estar en cualquier punto; "
-            "el programa centra automáticamente la apertura en el centroide de los nodos."
+            "Formato TXT: una línea por nodo  →  node_id   X   Y   Z   dX   dY   dZ  "
+            "(o X Y Z dX dY dZ)\n"
+            "Columnas separadas por espacios o tabuladores; se ignoran las líneas que "
+            "empiecen por '#'. Si la 1ª columna se repite, se interpreta como nº de caso de carga.\n"
+            "Exportar sólo los nodos de la superficie óptica. Por defecto la apertura se "
+            "centra en el centroide de área de la malla."
         )
         ttk.Label(frm_file, text=_fmt_text, foreground='#555555',
                   wraplength=680, justify='left').grid(
-            row=1, column=0, columnspan=2, padx=6, pady=(0, 6), sticky='w')
+            row=2, column=0, columnspan=2, padx=6, pady=(0, 6), sticky='w')
 
-        # ── Sólido rígido ─────────────────────────────────────────────
+        # ── Sólido rígido y sistema de referencia ─────────────────────
         frm_rigid = ttk.LabelFrame(self, text="Modos de sólido rígido a eliminar")
         frm_rigid.grid(row=1, column=0, sticky='ew', **pad)
 
@@ -456,34 +455,46 @@ class App(tk.Tk):
             ttk.Checkbutton(frm_rigid, text=lbl, variable=v).grid(
                 row=0, column=i, padx=8, pady=6)
 
+        ttk.Separator(frm_rigid, orient='vertical').grid(
+            row=0, column=6, sticky='ns', padx=8, pady=4)
+        ttk.Label(frm_rigid, text="Sistema:").grid(row=0, column=7, padx=(4, 2))
+        self.frame_var = tk.StringVar(value='global')
+        ttk.Radiobutton(frm_rigid, text='Global (Z = eje óptico)',
+                        variable=self.frame_var, value='global').grid(row=0, column=8, padx=4)
+        ttk.Radiobutton(frm_rigid, text='Plano best-fit',
+                        variable=self.frame_var, value='bestfit').grid(row=0, column=9, padx=4)
+
         # ── Apertura ─────────────────────────────────────────────────
         frm_ap = ttk.LabelFrame(self, text="Apertura del espejo")
         frm_ap.grid(row=2, column=0, sticky='ew', **pad)
-        frm_ap.columnconfigure(4, weight=1)
+        frm_ap.columnconfigure(5, weight=1)
 
         self.ap_var = tk.StringVar(value='Circular')
-        apertures = ['Circular', 'Hexagonal', 'Cuadrada', 'Rectangular']
+        apertures = ['Circular', 'Rectangular', 'Anular', 'Hexagonal']
         for i, name in enumerate(apertures):
-            ttk.Radiobutton(frm_ap, text=name, variable=self.ap_var,
-                            value=name, command=self._update_ap_fields).grid(
-                row=0, column=i, padx=10, pady=6)
+            rb = ttk.Radiobutton(frm_ap, text=name, variable=self.ap_var,
+                                 value=name, command=self._update_ap_fields)
+            if name in APERTURES_DISABLED:
+                rb.state(['disabled'])          # en gris: pendiente de implementar
+            rb.grid(row=0, column=i, padx=10, pady=6)
+        ttk.Label(frm_ap, text="(Anular y Hexagonal: próximamente)",
+                  foreground='gray').grid(row=0, column=4, padx=6, sticky='w')
 
         # Sub-frame para parámetros opcionales de apertura
         self.frm_ap_extra = ttk.Frame(frm_ap)
-        self.frm_ap_extra.grid(row=1, column=0, columnspan=5, sticky='ew', padx=6, pady=(0, 6))
+        self.frm_ap_extra.grid(row=1, column=0, columnspan=6, sticky='ew', padx=6, pady=(0, 6))
         self._ap_extra_widgets = {}
         self._build_ap_extras()
-        self._update_ap_fields()
 
-        # ── Zernike ───────────────────────────────────────────────────
-        frm_zern = ttk.LabelFrame(self, text="Polinomios de Zernike")
+        # ── Polinomios de ajuste ──────────────────────────────────────
+        frm_zern = ttk.LabelFrame(self, text="Polinomios de ajuste")
         frm_zern.grid(row=3, column=0, sticky='ew', **pad)
 
         ttk.Label(frm_zern, text="Número de términos:").grid(row=0, column=0, padx=8, pady=6)
         self.nterms_var = tk.IntVar(value=3)
         sp = ttk.Spinbox(frm_zern, from_=0, to=200, textvariable=self.nterms_var, width=6)
         sp.grid(row=0, column=1, padx=4, pady=6)
-        ttk.Label(frm_zern, text="  (0 = solo RMS, sin ajuste Zernike)").grid(
+        ttk.Label(frm_zern, text="  (0 = solo RMS, sin ajuste)").grid(
             row=0, column=2, padx=0, pady=6, sticky='w')
 
         ttk.Label(frm_zern, text="Normalización:").grid(row=0, column=3, padx=(20, 4), pady=6)
@@ -492,6 +503,24 @@ class App(tk.Tk):
             row=0, column=4, pady=6)
         ttk.Radiobutton(frm_zern, text='RMS', variable=self.norm_var, value='rms').grid(
             row=0, column=5, padx=4, pady=6)
+
+        ttk.Label(frm_zern, text="Convención Zernike:").grid(row=1, column=0, padx=8, pady=(0, 6))
+        self.conv_var = tk.StringVar(value='fringe')
+        self.rb_fringe = ttk.Radiobutton(frm_zern, text='Fringe', variable=self.conv_var,
+                                         value='fringe')
+        self.rb_fringe.grid(row=1, column=1, pady=(0, 6), sticky='w')
+        self.rb_noll = ttk.Radiobutton(frm_zern, text='Noll', variable=self.conv_var,
+                                       value='noll')
+        self.rb_noll.grid(row=1, column=2, pady=(0, 6), sticky='w')
+
+        self.wls_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frm_zern, text='WLS (ponderado por área)',
+                        variable=self.wls_var).grid(row=1, column=3, columnspan=3,
+                                                     padx=(20, 4), pady=(0, 6), sticky='w')
+
+        self.lbl_basis = ttk.Label(frm_zern, text='', foreground='#1f5fa8')
+        self.lbl_basis.grid(row=2, column=0, columnspan=6, padx=8, pady=(0, 6), sticky='w')
+        self._update_ap_fields()
 
         # ── Botón ejecutar ─────────────────────────────────────────────
         frm_btns = ttk.Frame(self)
@@ -554,22 +583,20 @@ class App(tk.Tk):
             ent = ttk.Entry(f, textvariable=var, width=10)
             widgets[key] = (lbl, ent, var)
 
-        row('radius',    'Radio circunscrito (vacío = auto):')
-        row('hexradius', 'Radio circunscrito (vacío = auto):')
-        row('side',      'Lado del cuadrado  (vacío = auto):')
-        row('width',     'Ancho (X) (vacío = auto):')
-        row('height',    'Alto  (Y) (vacío = auto):')
+        row('radius',    'Radio (vacío = auto):')
+        row('width',     'Ancho X (vacío = auto):')
+        row('height',    'Alto Y (vacío = auto):')
+        row('cx',        'Centro X (vacío = auto):')
+        row('cy',        'Centro Y:')
 
         self._ap_extra_widgets = widgets
 
     def _update_ap_fields(self):
-        """Muestra sólo los campos relevantes para la apertura seleccionada."""
+        """Muestra los campos de la apertura elegida y ajusta la base polinómica."""
         ap = self.ap_var.get()
         visible = {
-            'Circular':    ['radius'],
-            'Hexagonal':   ['hexradius'],
-            'Cuadrada':    ['side'],
-            'Rectangular': ['width', 'height'],
+            'Circular':    ['radius', 'cx', 'cy'],
+            'Rectangular': ['width', 'height', 'cx', 'cy'],
         }.get(ap, [])
 
         # Ocultar todos
@@ -582,6 +609,22 @@ class App(tk.Tk):
             lbl.grid(row=0, column=col * 2,     padx=(0, 2))
             ent.grid(row=0, column=col * 2 + 1, padx=(0, 12))
 
+        # Base polinómica según la apertura
+        if not hasattr(self, 'lbl_basis'):
+            return
+        if ap == 'Rectangular':
+            for rb in (self.rb_fringe, self.rb_noll):
+                rb.state(['disabled'])
+            self.lbl_basis.configure(
+                text="Base: Chebyshev 2D  Tᵢ(x)·Tⱼ(y), orden triangular "
+                     "(C0 pistón, C1 tilt X, C2 tilt Y, C3 curv. X, C4 torsión, C5 curv. Y…)")
+        else:
+            for rb in (self.rb_fringe, self.rb_noll):
+                rb.state(['!disabled'])
+            self.lbl_basis.configure(
+                text="Base: Zernike circular. Fringe 1-5 incluye astig. 0°; Noll 1-5 incluye "
+                     "astig. 45° (SurfCalc usa Noll por defecto).")
+
     # ── Acciones ────────────────────────────────────────────────────
 
     def _browse(self):
@@ -590,6 +633,35 @@ class App(tk.Tk):
             filetypes=[("Archivos de texto", "*.txt *.dat *.csv"), ("Todos", "*.*")])
         if path:
             self.fname_var.set(path)
+            self._cases_for_file(path)
+
+    def _cases_for_file(self, path):
+        """
+        Detecta si el fichero contiene varios casos de carga apilados y
+        rellena el desplegable.  Devuelve False si el fichero no se puede leer.
+        """
+        if getattr(self, '_cases_path', None) == path:
+            return True
+        try:
+            import fem_mirror_analysis as m
+            cases = m.list_load_cases(path)
+        except Exception as e:
+            messagebox.showerror("Error de lectura", f"No se pudo leer el fichero:\n{e}")
+            return False
+        self._cases_path = path
+        self._cases = cases or []
+        if self._cases:
+            vals = [f"{c:g}" for c in self._cases]
+            self.cb_case.configure(values=vals, state='readonly')
+            self.case_var.set(vals[0])
+            self.lbl_case.configure(
+                text=f"⚠ el fichero contiene {len(vals)} casos apilados: elige uno",
+                foreground='#b36b00')
+        else:
+            self.cb_case.configure(values=[], state='disabled')
+            self.case_var.set('')
+            self.lbl_case.configure(text="(fichero con un único caso)", foreground='gray')
+        return True
 
     def _log(self, text):
         """Escribe en el widget de log (seguro desde cualquier hilo)."""
@@ -662,17 +734,60 @@ class App(tk.Tk):
             s = var.get().strip()
             return s if s else None
 
+        aperture = self.ap_var.get()
+        if aperture not in APERTURES_ENABLED:
+            messagebox.showinfo("No disponible",
+                                f"La apertura '{aperture}' todavía no está implementada.")
+            return
+        conv = self.conv_var.get()
+        if aperture == 'Circular' and conv == 'fringe' and nterms > 37:
+            messagebox.showwarning("Parámetro inválido",
+                                   "El conjunto Fringe estándar tiene 37 términos como máximo.")
+            return
+
+        # Validar números
+        for key in ('radius', 'width', 'height', 'cx', 'cy'):
+            s = _val(key)
+            if s is not None:
+                try:
+                    float(s.replace(',', '.'))
+                except ValueError:
+                    messagebox.showwarning("Parámetro inválido",
+                                           f"Valor no numérico en '{key}': {s}")
+                    return
+        if (_val('cx') is None) != (_val('cy') is None):
+            messagebox.showwarning("Centro incompleto",
+                                   "Indica Centro X y Centro Y, o deja ambos vacíos.")
+            return
+        _num = lambda k: _val(k).replace(',', '.') if _val(k) else None
+
+        # Caso de carga
+        case = None
+        if not self._cases_for_file(fname):
+            return
+        if self._cases:
+            try:
+                case = float(self.case_var.get())
+            except ValueError:
+                messagebox.showwarning("Caso de carga",
+                                       "El fichero tiene varios casos: elige uno.")
+                return
+
         params = {
-            'fname':    fname,
-            'rigid':    tuple(int(v.get()) for v in self.rigid_vars),
-            'aperture': self.ap_var.get(),
-            'nterms':   nterms,
-            'norm':     self.norm_var.get(),
-            'radius':   _val('radius'),
-            'hexradius':_val('hexradius'),
-            'side':     _val('side'),
-            'width':    _val('width'),
-            'height':   _val('height'),
+            'fname':      fname,
+            'case':       case,
+            'rigid':      tuple(int(v.get()) for v in self.rigid_vars),
+            'frame':      self.frame_var.get(),
+            'aperture':   aperture,
+            'nterms':     nterms,
+            'norm':       self.norm_var.get(),
+            'convention': conv,
+            'wls':        bool(self.wls_var.get()),
+            'radius':     _num('radius'),
+            'width':      _num('width'),
+            'height':     _num('height'),
+            'cx':         _num('cx'),
+            'cy':         _num('cy'),
         }
 
         self.btn_run.configure(state='disabled', text="Ejecutando…")
@@ -748,7 +863,7 @@ class App(tk.Tk):
         cb.formatter = mticker.FuncFormatter(lambda v, _: f'{v/scale:.2e}')
         cb.update_ticks()
 
-        title2 = (f'Residuo Zernike ({nterms} términos) — apertura {aperture}'
+        title2 = (f"Residuo {data.get('fam', 'Zernike')} ({nterms} términos) — apertura {aperture}"
                   if nterms > 0 else f'Apertura {aperture}')
         ax.set_title(
             f'Vista 3D — {title2}\n'

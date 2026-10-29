@@ -10,66 +10,94 @@ zernikeISO2nm.m  (MatlabToolsJCL, IAC / JCL)
 
 FORMATO DEL FICHERO DE ENTRADA TXT
 ===================================
-El fichero de texto debe contener una línea por nodo FEM con los siguientes
-campos separados por espacios o tabuladores:
+Una línea por nodo FEM, campos separados por espacios o tabuladores:
 
-    node_id   X   Y   Z   dX   dY   dZ
+    node_id   X   Y   Z   dX   dY   dZ        (7 columnas)
+    X   Y   Z   dX   dY   dZ                  (6 columnas, sin node_id)
 
-  - node_id : Entero. Identificador del nodo (no se usa en el análisis).
-  - X, Y, Z : Coordenadas de posición del nodo en el sistema global (mm típicamente).
-              El eje Z debe ser el eje óptico (normal al espejo en reposo).
-  - dX, dY, dZ : Desplazamientos elásticos del nodo bajo la carga analizada (mismas
-                 unidades que X Y Z).
-
-Ejemplo de líneas válidas:
-    1    0.000   0.000  1500.000   0.001  -0.002   0.015
-    2   50.000  86.603  1499.987   0.000   0.001   0.018
-    3  100.000   0.000  1499.950  -0.001   0.000   0.012
-    ...
-
-Restricciones y recomendaciones:
-  - Las líneas que comiencen por '#' o estén vacías se ignoran.
-  - No es necesario ordenar los nodos por ningún criterio.
-  - El origen de coordenadas NO necesita estar centrado en el espejo;
-    el programa calcula automáticamente el centroide de los nodos y
-    centra ahí todas las funciones de apertura (circular, cuadrada,
-    rectangular o hexagonal).
-  - Se recomienda exportar el fichero en el sistema de referencia del
-    elemento óptico (eje Z = eje óptico), no en el sistema global de
-    la estructura, para que los desplazamientos dZ representen
-    correctamente el error de figura.
-  - Unidades: el programa es agnóstico a las unidades; los resultados
-    (RMS, PV, coeficientes de Zernike) estarán en las mismas unidades
-    que dX dY dZ (nanómetros si se exporta en nm, micras si en µm, etc.).
+  - X, Y, Z    : coordenadas del nodo.
+  - dX, dY, dZ : desplazamientos del nodo (mismas unidades que X Y Z).
+  - Las líneas que empiezan por '#' o vacías se ignoran.
+  - El orden de los nodos es indiferente.
+  - Sólo deben exportarse los nodos de la SUPERFICIE ÓPTICA.
+  - Si la primera columna tiene valores repetidos se interpreta como número
+    de CASO DE CARGA (varios casos apilados, p. ej. AARESULTADOS2.TXT) y hay
+    que elegir uno con --case.
+  - El programa es agnóstico a unidades: RMS, PV y coeficientes salen en
+    las unidades de dX dY dZ.
 
 
-Flujo de trabajo
+FLUJO DE TRABAJO
 ----------------
-1. Leer fichero TXT con nube de puntos FEM
-   Formato esperado: node_id  X  Y  Z  dX  dY  dZ
-2. Triangulación de Delaunay → áreas nodales y normales de superficie
-3. Eliminar modos de sólido rígido seleccionables (Tx Ty Tz Rx Ry Rz)
-4. Calcular desplazamiento normal residual y su RMS ponderado por área
-5. Descomponer en polinomios de Zernike (ISO) sobre la apertura seleccionada:
-   circular | cuadrada | rectangular | hexagonal
+1. Leer la nube de puntos FEM.
+2. Sistema de referencia (--frame):
+     global  : Z del fichero = eje óptico (por defecto, como el MATLAB).
+     bestfit : girar a la normal del plano best-fit (SVD), equivalente a
+               SurfCalc "Best-fit Plane (Auto)".  Útil si el espejo plano
+               está exportado inclinado.  NO usar en modelos parciales de
+               espejos curvos ni en segmentos fuera de eje.
+   Para un espejo plano exportado con Z = eje óptico ambos coinciden.
+3. Triangulación de Delaunay → áreas nodales (proyectadas en la pupila) y
+   normales nodales.
+4. Eliminar los modos de sólido rígido seleccionados (Tx Ty Tz Rx Ry Rz),
+   ajuste por mínimos cuadrados ponderado por área.
+5. Desplazamiento normal residual  u_n = u · n̂.
+6. Ajuste polinómico WLS (ponderado por área) sobre la apertura:
+     circular     → Zernike circular, convención Fringe o Noll
+     rectangular  → Chebyshev 2D  T_i(x)·T_j(y)
+     anular       → (pendiente: Zernike anular de Mahajan)
+     hexagonal    → (pendiente: polinomios de segmento hexagonal)
+
+
+CONVENCIONES DE ZERNIKE (apertura circular)
+-------------------------------------------
+Fringe (--convention fringe, por defecto).  Índices del script 0-based,
+históricos de zernikeISO2nm.m.  Script Zk ↔ Fringe Z(k+1):
+  Z0 pistón · Z1 tilt X (cosθ) · Z2 tilt Y (sinθ) · Z3 desenfoque ·
+  Z4 astig. 0°/90° (cos2θ) · Z5 astig. ±45° (sin2θ) · Z6/Z7 coma X/Y ·
+  Z8 esférica primaria · Z9/Z10 trébol · ...
+
+Noll (--convention noll).  Índices 1-based estándar (Noll 1976):
+  Z1 pistón · Z2 tilt X · Z3 tilt Y · Z4 desenfoque · Z5 astig. ±45° ·
+  Z6 astig. 0°/90° · Z7/Z8 coma · Z9/Z10 trébol · Z11 esférica · ...
+
+¡Atención!  "Términos 1-5" NO son lo mismo en Fringe (incluye astig. 0°)
+que en Noll (incluye astig. 45°).  SurfCalc usa Noll por defecto.
+
+Normalización (--norm): 'pico' (valor máximo 1 en el borde) o 'rms'
+(RMS unidad sobre el disco, normalización de Noll).  Sólo cambia el valor
+de los coeficientes; el residuo, su RMS y su PV NO dependen de ella.
+
+
+POLINOMIOS DE CHEBYSHEV (apertura rectangular)
+----------------------------------------------
+Producto tensorial de Chebyshev de primera especie T_i(x)·T_j(y), con x, y
+normalizados a [-1, 1] mediante la semianchura y semialtura de la apertura.
+Ordenación triangular por grado total k = i + j y, dentro de cada grado,
+de mayor a menor potencia en x:
+  C0 (0,0) pistón · C1 (1,0) tilt X · C2 (0,1) tilt Y ·
+  C3 (2,0) curvatura X · C4 (1,1) torsión · C5 (0,2) curvatura Y · ...
+Los lados del rectángulo deben ser paralelos a los ejes X e Y.
+
 
 Uso
 ---
-python fem_mirror_analysis.py AARESULTADOS2.TXT [opciones]
+python fem_mirror_analysis.py RESULTADOS.TXT [opciones]
 
 Ejemplos
 --------
-# Sólo quitar Tz (defecto), apertura circular, ajustar Z0..Z9
-python fem_mirror_analysis.py AARESULTADOS2.TXT --terms 0 1 2 3 4 5 6 7 8 9
+# Apertura circular, ajustar los 5 primeros Fringe (Z0..Z4)
+python fem_mirror_analysis.py RESULTADOS.TXT --terms 0 1 2 3 4
 
-# Quitar todos los modos de sólido rígido, espejo hexagonal radio 750 mm
-python fem_mirror_analysis.py AARESULTADOS2.TXT \\
-    --rigid 1 1 1 1 1 1 \\
-    --aperture hexagonal --hexradius 750 \\
-    --terms 0 1 2 3 4 5 6 7 8 9 10 --plot
+# Igual que SurfCalc "Noll Zernike, terms 1-5"
+python fem_mirror_analysis.py RESULTADOS.TXT --convention noll --terms 1 2 3 4 5
 
-# Listar nombres ISO de Zernike
-python fem_mirror_analysis.py --list-terms
+# Espejo rectangular 120 x 80, Chebyshev hasta grado 2
+python fem_mirror_analysis.py RESULTADOS.TXT --aperture rectangular \\
+    --width 120 --height 80 --terms 0 1 2 3 4 5 --plot
+
+# Listar términos
+python fem_mirror_analysis.py --list-terms --convention noll
 
 Dependencias
 ------------
@@ -86,41 +114,65 @@ from scipy.spatial import Delaunay
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  APERTURAS Y BASES DISPONIBLES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Aperturas implementadas y la base polinómica que usa cada una
+APERTURE_BASIS = {
+    'circular':    'zernike',
+    'rectangular': 'chebyshev',
+}
+# Aperturas previstas pero todavía no implementadas (no seleccionables)
+APERTURES_PENDING = ('annular', 'hexagonal')
+
+ZERNIKE_CONVENTIONS = ('fringe', 'noll')
+FRINGE_MAX_TERMS = 37      # el conjunto Fringe estándar termina en Z37 = (12, 0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  POLINOMIOS DE ZERNIKE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Nombres descriptivos de los primeros términos ISO
-ZERNIKE_NAMES = {
-    0:  "Pistón (Z0)",
-    1:  "Tip Y / Inclinación Y (Z1)",
-    2:  "Tilt X / Inclinación X (Z2)",
-    3:  "Desenfoque / Foco (Z3)",
-    4:  "Astigmatismo oblicuo (Z4)",
-    5:  "Astigmatismo (Z5)",
-    6:  "Coma Y (Z6)",
-    7:  "Coma X (Z7)",
-    8:  "Trébol Y (Z8)",
-    9:  "Trébol X (Z9)",
-    10: "Aberración esférica primaria (Z10)",
-    11: "Astigmatismo secundario oblicuo (Z11)",
-    12: "Astigmatismo secundario (Z12)",
-    13: "Coma secundaria Y (Z13)",
-    14: "Coma secundaria X (Z14)",
-    15: "Aberración esférica secundaria (Z15)",
+# Nombres por (n, m).  m > 0 → cos(mθ) ; m < 0 → sin(|m|θ)
+_ZERNIKE_NM_NAMES = {
+    (0, 0):  "Pistón",
+    (1, 1):  "Tilt X (cos θ)",
+    (1, -1): "Tilt Y (sin θ)",
+    (2, 0):  "Desenfoque",
+    (2, 2):  "Astigmatismo 0°/90° (cos 2θ)",
+    (2, -2): "Astigmatismo ±45° (sin 2θ)",
+    (3, 1):  "Coma X",
+    (3, -1): "Coma Y",
+    (3, 3):  "Trébol X (cos 3θ)",
+    (3, -3): "Trébol Y (sin 3θ)",
+    (4, 0):  "Esférica primaria",
+    (4, 2):  "Astigmatismo secundario 0°/90°",
+    (4, -2): "Astigmatismo secundario ±45°",
+    (4, 4):  "Tetrafoil (cos 4θ)",
+    (4, -4): "Tetrafoil (sin 4θ)",
+    (5, 1):  "Coma secundaria X",
+    (5, -1): "Coma secundaria Y",
+    (5, 3):  "Trébol secundario X",
+    (5, -3): "Trébol secundario Y",
+    (6, 0):  "Esférica secundaria",
+    (8, 0):  "Esférica terciaria",
 }
+
+
+def zernike_name(n, m):
+    """Nombre descriptivo del polinomio Z_n^m."""
+    return _ZERNIKE_NM_NAMES.get((int(n), int(m)), f"Z(n={n}, m={m:+d})")
 
 
 def zernike_iso2nm(nterms):
     """
-    Órdenes radial (n) y angular (m) para los primeros `nterms` polinomios
-    de Zernike en ordenación ISO estándar.
+    Órdenes (n, m) de los primeros `nterms` polinomios en la ordenación
+    histórica de zernikeISO2nm.m.  Coincide con la ordenación FRINGE
+    (0-based, script Zk ↔ Fringe Z(k+1)) para los 36 primeros términos;
+    Fringe Z37 = (12, 0) es un caso especial tratado en zernike_index_to_nm.
 
-    ISO Z_0 = pistón, Z_1 = tip (m=−1), Z_2 = tilt (m=+1), ...
-
-    Parámetros
-    ----------
-    nterms : int
-        Número de términos requeridos.
+        Z0 (0,0)  Z1 (1,+1)  Z2 (1,-1)  Z3 (2,0)  Z4 (2,+2)  Z5 (2,-2)
+        Z6 (3,+1) Z7 (3,-1)  Z8 (4,0)   Z9 (3,+3) Z10 (3,-3) ...
 
     Devuelve
     --------
@@ -146,30 +198,64 @@ def zernike_iso2nm(nterms):
     return n_arr, m_arr
 
 
+def zernike_noll2nm(j):
+    """
+    Órdenes (n, m) del polinomio de Noll j (1-based, Noll 1976).
+
+    j par → cos(|m|θ) (m > 0) ; j impar → sin(|m|θ) (m < 0).
+        Z1 (0,0)  Z2 (1,+1)  Z3 (1,-1)  Z4 (2,0)  Z5 (2,-2)  Z6 (2,+2)
+        Z7 (3,-1) Z8 (3,+1)  Z9 (3,-3)  Z10 (3,+3) Z11 (4,0) ...
+    """
+    if j < 1:
+        raise ValueError(f"Índice de Noll inválido: {j} (debe ser ≥ 1)")
+    n = 0
+    while j > (n + 1) * (n + 2) // 2:
+        n += 1
+    k = j - n * (n + 1) // 2            # posición dentro de la fila, 1..n+1
+    if n % 2 == 0:
+        m_abs = 2 * (k // 2)
+    else:
+        m_abs = 2 * ((k - 1) // 2) + 1
+    if m_abs == 0:
+        return n, 0
+    return n, (m_abs if j % 2 == 0 else -m_abs)
+
+
+def zernike_index_to_nm(t, convention='fringe'):
+    """
+    (n, m) del término `t` en la convención indicada.
+      fringe : t 0-based (índice histórico del script; Fringe 1-based = t+1)
+      noll   : t 1-based (índice de Noll estándar)
+    """
+    if convention == 'fringe':
+        if t < 0 or t >= FRINGE_MAX_TERMS:
+            raise ValueError(
+                f"Índice Fringe inválido: {t}.  El conjunto Fringe estándar "
+                f"tiene {FRINGE_MAX_TERMS} términos (índices 0..{FRINGE_MAX_TERMS - 1}).")
+        if t == 36:
+            return 12, 0                 # Fringe Z37 = esférica de 6º orden
+        n_arr, m_arr = zernike_iso2nm(t + 1)
+        return int(n_arr[t]), int(m_arr[t])
+    if convention == 'noll':
+        return zernike_noll2nm(t)
+    raise ValueError(f"Convención de Zernike desconocida: {convention}")
+
+
 def zernike_radial_coeffs(n, m_abs, norm='pico'):
     """
-    Coeficientes del polinomio radial de Zernike R_n^|m|(r), en orden
-    descendente de potencias (compatible con numpy.polyval).
+    Coeficientes del polinomio radial R_n^|m|(r), en orden descendente de
+    potencias (compatible con numpy.polyval).
 
-    Fórmula:
-        R_n^m(r) = Σ_{s=0}^{(n-m)/2}  (-1)^s (n-s)! / [s! ((n+m)/2-s)! ((n-m)/2-s)!]  r^{n-2s}
+        R_n^m(r) = Σ_{s=0}^{(n-m)/2} (-1)^s (n-s)! /
+                   [s! ((n+m)/2-s)! ((n-m)/2-s)!]  r^{n-2s}
 
-    Parámetros
-    ----------
-    n     : int   Orden radial
-    m_abs : int   |m|, orden angular (≥ 0)
-    norm  : str   'pico' → máximo = 1 ;  'rms' → RMS sobre disco unidad = 1
-
-    Devuelve
-    --------
-    coeffs : ndarray (n+1,)   Coeficientes en orden DESCENDENTE de potencias.
+    norm : 'pico' → máximo = 1 ;  'rms' → RMS sobre el disco unidad = 1
     """
     if (n + m_abs) % 2 != 0:
         raise ValueError(f"n={n}, |m|={m_abs}: n+|m| debe ser par")
     if m_abs > n:
         raise ValueError(f"n={n}, |m|={m_abs}: |m| debe ser ≤ n")
 
-    # Posición 2*s en el array de longitud n+1 recibe el coeficiente de r^(n-2s)
     coeffs = np.zeros(n + 1)
     for s in range((n - m_abs) // 2 + 1):
         num = math.factorial(n - s)
@@ -181,121 +267,273 @@ def zernike_radial_coeffs(n, m_abs, norm='pico'):
     if norm == 'rms':
         factor = math.sqrt(n + 1) if m_abs == 0 else math.sqrt(2 * (n + 1))
         coeffs *= factor
-
     return coeffs
 
 
 def eval_zernike_term(n, m, r, theta, norm='pico'):
     """
-    Evalúa el polinomio de Zernike Z_n^m en los puntos (r, theta).
-
-    Convención:
-        m ≥ 0 → Z = R_n^m(r) cos(m θ)
-        m < 0 → Z = R_n^m(r) sin(|m| θ)
-
-    Parámetros
-    ----------
-    n, m   : int        Órdenes radial y angular
-    r      : ndarray    Coordenada radial normalizada [0, 1]
-    theta  : ndarray    Ángulo azimutal [rad]
-    norm   : str        'pico' o 'rms'
-
-    Devuelve
-    --------
-    Z : ndarray con los valores del polinomio en cada punto.
+    Z_n^m(r, θ):   m ≥ 0 → R_n^m(r) cos(mθ) ;  m < 0 → R_n^|m|(r) sin(|m|θ)
     """
-    coeffs = zernike_radial_coeffs(n, abs(m), norm)
-    R = np.polyval(coeffs, r)
+    R = np.polyval(zernike_radial_coeffs(n, abs(m), norm), r)
     if m >= 0:
         return R * np.cos(m * theta)
-    else:
-        return R * np.sin(-m * theta)
+    return R * np.sin(-m * theta)
 
 
-def build_zernike_matrix(terms, r, theta, norm='pico'):
-    """
-    Construye la matriz de diseño para el ajuste de Zernike.
-
-    Parámetros
-    ----------
-    terms  : list[int]  Índices ISO de los términos a incluir
-    r      : ndarray    Coordenada radial normalizada [0, 1]
-    theta  : ndarray    Ángulo azimutal [rad]
-    norm   : str        'pico' o 'rms'
-
-    Devuelve
-    --------
-    A : ndarray (N_puntos, N_terms)
-    """
-    max_term = max(terms) + 1
-    n_arr, m_arr = zernike_iso2nm(max_term)
+def build_zernike_matrix(terms, r, theta, norm='pico', convention='fringe'):
+    """Matriz de diseño (N_puntos × N_terms) de Zernike."""
     A = np.zeros((len(r), len(terms)))
     for col, t in enumerate(terms):
-        A[:, col] = eval_zernike_term(n_arr[t], m_arr[t], r, theta, norm)
+        n, m = zernike_index_to_nm(t, convention)
+        A[:, col] = eval_zernike_term(n, m, r, theta, norm)
     return A
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  GEOMETRÍA DE SUPERFICIE: ÁREAS NODALES Y NORMALES
+#  POLINOMIOS DE CHEBYSHEV 2D (APERTURA RECTANGULAR)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
+def chebyshev_index2ij(t):
     """
-    Triangulación de Delaunay en XY de la nube de puntos 3D.
-    Calcula áreas nodales (ponderación por área del triángulo / 3) y
-    vectores normales unitarios en cada nodo.
+    Grados (i, j) del término t (0-based) en ordenación triangular estándar:
+    grado total k = i + j creciente; dentro de cada k, i decreciente.
 
-    Equivale a la triangulación de extract_rigid.m / lee.m.
+        C0 (0,0)  C1 (1,0)  C2 (0,1)  C3 (2,0)  C4 (1,1)  C5 (0,2)
+        C6 (3,0)  C7 (2,1)  C8 (1,2)  C9 (0,3)  ...
+    """
+    if t < 0:
+        raise ValueError(f"Índice de Chebyshev inválido: {t} (0-based, ≥ 0)")
+    k = 0
+    while t > (k + 1) * (k + 2) // 2 - 1:
+        k += 1
+    pos = t - k * (k + 1) // 2           # 0..k dentro del grado k
+    i = k - pos
+    return i, k - i
 
-    Parámetros
-    ----------
-    coor           : ndarray (N, 3)   Coordenadas X, Y, Z de los nodos
-    area_threshold : float            Área mínima en XY para aceptar un triángulo
-                                      (filtra triángulos degenerados; MATLAB usa 1)
+
+_CHEB_NAMES = {
+    (0, 0): "Pistón",
+    (1, 0): "Tilt X",
+    (0, 1): "Tilt Y",
+    (2, 0): "Curvatura X (cilindro)",
+    (1, 1): "Torsión (twist)",
+    (0, 2): "Curvatura Y (cilindro)",
+    (3, 0): "Cúbico X",
+    (0, 3): "Cúbico Y",
+    (2, 1): "Coma-like Y (x²·y)",
+    (1, 2): "Coma-like X (x·y²)",
+    (4, 0): "Cuártico X",
+    (0, 4): "Cuártico Y",
+    (2, 2): "x²·y² (silla doble)",
+}
+
+
+def chebyshev_name(i, j):
+    return _CHEB_NAMES.get((int(i), int(j)), f"T{i}(x)·T{j}(y)")
+
+
+_CHEB_RMS_CACHE = {}
+
+
+def _chebyshev_rms_1d(n):
+    """RMS de T_n(x) sobre [-1, 1] con peso uniforme (cuadratura de Gauss)."""
+    if n not in _CHEB_RMS_CACHE:
+        xg, wg = np.polynomial.legendre.leggauss(max(32, n + 8))
+        c = np.zeros(n + 1)
+        c[n] = 1.0
+        Tn = np.polynomial.chebyshev.chebval(xg, c)
+        _CHEB_RMS_CACHE[n] = math.sqrt(float(np.sum(wg * Tn ** 2)) / 2.0)
+    return _CHEB_RMS_CACHE[n]
+
+
+def eval_chebyshev_term(i, j, x, y, norm='pico'):
+    """
+    T_i(x)·T_j(y) con x, y ∈ [-1, 1].
+    norm : 'pico' → máximo 1 ;  'rms' → RMS unidad sobre el rectángulo.
+    """
+    ci = np.zeros(i + 1); ci[i] = 1.0
+    cj = np.zeros(j + 1); cj[j] = 1.0
+    val = (np.polynomial.chebyshev.chebval(x, ci)
+           * np.polynomial.chebyshev.chebval(y, cj))
+    if norm == 'rms':
+        val = val / (_chebyshev_rms_1d(i) * _chebyshev_rms_1d(j))
+    return val
+
+
+def build_chebyshev_matrix(terms, x, y, norm='pico'):
+    """Matriz de diseño (N_puntos × N_terms) de Chebyshev 2D."""
+    A = np.zeros((len(x), len(terms)))
+    for col, t in enumerate(terms):
+        i, j = chebyshev_index2ij(t)
+        A[:, col] = eval_chebyshev_term(i, j, x, y, norm)
+    return A
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  INTERFAZ COMÚN DE BASES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def basis_key(aperture, convention='fringe'):
+    """Base a usar: 'fringe' | 'noll' | 'chebyshev'."""
+    if aperture in APERTURES_PENDING:
+        raise NotImplementedError(
+            f"La apertura '{aperture}' todavía no está implementada.")
+    fam = APERTURE_BASIS[aperture]
+    if fam == 'chebyshev':
+        return 'chebyshev'
+    if convention not in ZERNIKE_CONVENTIONS:
+        raise ValueError(f"Convención desconocida: {convention}")
+    return convention
+
+
+def default_terms(basis, nterms):
+    """Los `nterms` primeros términos de la base, en sus índices nativos."""
+    if basis == 'noll':
+        return list(range(1, nterms + 1))
+    return list(range(nterms))
+
+
+def term_info(basis, t):
+    """
+    Información de un término para imprimir.
+
+    Devuelve (etiqueta, índice SurfCalc 1-based, orden, nombre).
+    """
+    if basis == 'fringe':
+        n, m = zernike_index_to_nm(t, 'fringe')
+        return f"Z{t}", t + 1, f"n={n} m={m:+d}", zernike_name(n, m)
+    if basis == 'noll':
+        n, m = zernike_noll2nm(t)
+        return f"Z{t}", t, f"n={n} m={m:+d}", zernike_name(n, m)
+    if basis == 'chebyshev':
+        i, j = chebyshev_index2ij(t)
+        return f"C{t}", t + 1, f"i={i} j={j}", chebyshev_name(i, j)
+    raise ValueError(f"Base desconocida: {basis}")
+
+
+def build_design_matrix(basis, terms, coords, norm='pico'):
+    """
+    Matriz de diseño para cualquier base.
+      coords : dict con 'r' y 'theta' (Zernike) o 'x' e 'y' (Chebyshev),
+               todos normalizados a la apertura.
+    """
+    if basis in ZERNIKE_CONVENTIONS:
+        return build_zernike_matrix(terms, coords['r'], coords['theta'],
+                                    norm, convention=basis)
+    if basis == 'chebyshev':
+        return build_chebyshev_matrix(terms, coords['x'], coords['y'], norm)
+    raise ValueError(f"Base desconocida: {basis}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GEOMETRÍA DE SUPERFICIE: SISTEMA LOCAL, ÁREAS NODALES Y NORMALES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def compute_bestfit_normal(coor):
+    """
+    Normal del plano best-fit de la nube de puntos (SVD / PCA): dirección de
+    mínima varianza.  Se orienta con componente Z ≥ 0 (mismo convenio que
+    SurfCalc: "every Normal Type resolves to an axis with a non-negative Z").
+
+    Devuelve un vector unitario (3,).
+    """
+    centered = coor - coor.mean(axis=0)
+    _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+    normal = Vt[-1]
+    if normal[2] < 0:
+        normal = -normal
+    return normal / np.linalg.norm(normal)
+
+
+def rotation_to_z(normal):
+    """
+    Matriz de giro R (3×3) que lleva `normal` a +Z con la rotación mínima
+    (fórmula de Rodrigues), conservando lo más posible la orientación de X, Y.
+    """
+    n = np.asarray(normal, dtype=float)
+    n = n / np.linalg.norm(n)
+    z = np.array([0.0, 0.0, 1.0])
+    v = np.cross(n, z)
+    s = np.linalg.norm(v)
+    c = float(n @ z)
+    if s < 1e-12:
+        return np.eye(3) if c > 0 else np.diag([1.0, -1.0, -1.0])
+    vx = np.array([[0, -v[2], v[1]],
+                   [v[2], 0, -v[0]],
+                   [-v[1], v[0], 0]])
+    return np.eye(3) + vx + vx @ vx * ((1 - c) / s ** 2)
+
+
+def to_local_frame(coor, disp):
+    """
+    Gira coordenadas y desplazamientos al sistema local de la superficie
+    (normal best-fit → +Z).  Equivale a "Normal Type: Best-fit Plane (Auto)"
+    de SurfCalc.  No traslada el origen, para que los giros de sólido rígido
+    se sigan refiriendo al mismo punto que en el sistema global.
 
     Devuelve
     --------
-    simplices  : ndarray (M, 3)   Índices de los triángulos válidos
-    an         : ndarray (N,)     Áreas nodales normalizadas (suma = 1)
-    normals    : ndarray (N, 3)   Vectores normales unitarios en cada nodo
+    coor_l, disp_l : ndarray (N, 3)
+    info           : dict con 'normal', 'R' y 'tilt_deg' (ángulo normal–Z)
+    """
+    normal = compute_bestfit_normal(coor)
+    R = rotation_to_z(normal)
+    tilt = math.degrees(math.acos(max(-1.0, min(1.0, float(normal[2])))))
+    return coor @ R.T, disp @ R.T, {'normal': normal, 'R': R, 'tilt_deg': tilt}
+
+
+def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
+    """
+    Triangulación de Delaunay en XY.  Áreas nodales (área proyectada del
+    triángulo / 3) y normales unitarias en cada nodo.
+
+    Equivale a la triangulación de extract_rigid.m / lee.m.
+
+    area_threshold : área mínima (en XY, unidades del modelo²) para aceptar
+        un triángulo.  ¡Ojo! es absoluta: MATLAB usaba 1 para un espejo de
+        1,2 m en mm; en espejos pequeños un umbral de 1 descarta casi toda
+        la malla.  Por defecto 0 (sólo se descartan triángulos de área nula).
+
+    Devuelve
+    --------
+    simplices : ndarray (M, 3)   Triángulos válidos
+    an        : ndarray (N,)     Áreas nodales normalizadas (suma = 1);
+                                 0 en nodos que no pertenecen a ningún
+                                 triángulo válido (p. ej. nodos duplicados)
+    normals   : ndarray (N, 3)   Normales unitarias (0 en esos nodos)
     """
     npts = len(coor)
-
-    # Triangulación 2D en XY
     tri = Delaunay(coor[:, :2])
-    simplices = tri.simplices  # (M, 3)
+    simplices = tri.simplices
 
-    # Vectores de arista en XY para calcular el área proyectada
     p0 = coor[simplices[:, 0], :2]
     p1 = coor[simplices[:, 1], :2]
     p2 = coor[simplices[:, 2], :2]
     v12 = p1 - p0
     v13 = p2 - p0
-    # Dos veces el área del triángulo proyectado en XY (= módulo del producto vectorial 2D)
+    # Doble del área proyectada en XY
     area2d = np.abs(v12[:, 0] * v13[:, 1] - v13[:, 0] * v12[:, 1])
 
-    # Filtrar triángulos degenerados (igual que MATLAB: find(abs(area)>1))
-    valid = area2d > area_threshold
+    valid = area2d > max(area_threshold, 0.0)
     simplices = simplices[valid]
     area2d = area2d[valid]
 
-    # ── Normales de triángulo en 3D ─────────────────────────────────────────
+    # Normales de triángulo en 3D, orientadas con la normal global
     p0 = coor[simplices[:, 0]]
     p1 = coor[simplices[:, 1]]
     p2 = coor[simplices[:, 2]]
-    face_n = np.cross(p1 - p0, p2 - p0)              # (M, 3)
-    # Orientar para que la componente Z sea positiva
-    sign_z = np.sign(face_n[:, 2])
-    sign_z[sign_z == 0] = 1.0
-    face_n *= sign_z[:, np.newaxis]
+    face_n = np.cross(p1 - p0, p2 - p0)
+    global_normal = compute_bestfit_normal(coor)
+    sign_n = np.sign(face_n @ global_normal)
+    sign_n[sign_n == 0] = 1.0
+    face_n *= sign_n[:, np.newaxis]
 
-    # ── Áreas nodales ────────────────────────────────────────────────────────
     an = np.zeros(npts)
     for j in range(3):
         np.add.at(an, simplices[:, j], area2d / 3.0)
-    an /= an.sum()   # normalizar: suma = 1
+    if an.sum() > 0:
+        an /= an.sum()
 
-    # ── Normales nodales (acumular y normalizar) ─────────────────────────────
     node_n = np.zeros((npts, 3))
     for j in range(3):
         np.add.at(node_n, simplices[:, j], face_n)
@@ -313,30 +551,20 @@ def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
 def extract_rigid(coor, disp, rigidmodes=(0, 0, 1, 0, 0, 0),
                   area_threshold=0.0):
     """
-    Extrae el desplazamiento de sólido rígido de un campo de desplazamientos
-    nodales y devuelve el desplazamiento normal residual.
+    Elimina el movimiento de sólido rígido y devuelve el desplazamiento
+    normal residual.  Traducción de extract_rigid.m (IAC).
 
-    Traducción directa de extract_rigid.m (IAC).
-
-    Modos de sólido rígido (traslaciones y rotaciones):
         rigidmodes = [Tx, Ty, Tz, Rx, Ry, Rz]   0 = conservar, 1 = eliminar
 
-    La extracción se hace por mínimos cuadrados ponderados por la raíz
-    cuadrada del área nodal.  Los modos activos se eliminan restando el
-    campo de desplazamiento rígido más próximo (en sentido L²-área-ponderado).
-
-    Parámetros
-    ----------
-    coor          : ndarray (N, 3)  Coordenadas de nodos
-    disp          : ndarray (N, 3)  Desplazamientos nodales [dX, dY, dZ]
-    rigidmodes    : secuencia de 6 ints  Flags de modos a eliminar
-    area_threshold: float           Umbral de área para triángulos degenerados
+    Ajuste por mínimos cuadrados del campo 3D (dX, dY, dZ) ponderado por
+    √(área nodal).  Los giros se toman respecto al ORIGEN de coordenadas.
 
     Devuelve
     --------
-    un  : ndarray (N,)   Desplazamiento normal residual
+    un  : ndarray (N,)   Desplazamiento normal residual (NaN en nodos sin
+                         área, que no pertenecen a ningún triángulo)
     an  : ndarray (N,)   Áreas nodales normalizadas
-    pos : ndarray (6,)   Coeficientes de sólido rígido [Tx, Ty, Tz, Rx, Ry, Rz]
+    pos : ndarray (6,)   Coeficientes [Tx, Ty, Tz, Rx, Ry, Rz]
     """
     _, an, node_norms = compute_nodal_areas_and_normals(coor, area_threshold)
 
@@ -345,209 +573,238 @@ def extract_rigid(coor, disp, rigidmodes=(0, 0, 1, 0, 0, 0),
     active = [i for i, f in enumerate(rigidmodes) if f != 0]
 
     if active:
-        an_sqrt = np.sqrt(an)          # peso nodal = sqrt(área)
+        an_sqrt = np.sqrt(an)
         npts = len(coor)
-
-        # Matriz de modos de sólido rígido ponderada: (3*N, 6)
-        # Orden de filas: [N filas dX | N filas dY | N filas dZ]
-        # Columnas: Tx, Ty, Tz, Rx, Ry, Rz
         A = np.zeros((3 * npts, 6))
-        # Traslaciones puras
-        A[0       :npts,   0] = an_sqrt            # Tx → dX
-        A[npts    :2*npts, 1] = an_sqrt            # Ty → dY
-        A[2*npts  :3*npts, 2] = an_sqrt            # Tz → dZ
-        # Rotación Rx (alrededor de X): dY = -Z*Rx, dZ = +Y*Rx
-        A[npts    :2*npts, 3] = -coor[:, 2] * an_sqrt
-        A[2*npts  :3*npts, 3] = +coor[:, 1] * an_sqrt
-        # Rotación Ry (alrededor de Y): dX = +Z*Ry, dZ = -X*Ry
-        A[0       :npts,   4] = +coor[:, 2] * an_sqrt
-        A[2*npts  :3*npts, 4] = -coor[:, 0] * an_sqrt
-        # Rotación Rz (alrededor de Z): dX = -Y*Rz, dY = +X*Rz
-        A[0       :npts,   5] = -coor[:, 1] * an_sqrt
-        A[npts    :2*npts, 5] = +coor[:, 0] * an_sqrt
+        A[0:npts, 0] = an_sqrt                       # Tx → dX
+        A[npts:2 * npts, 1] = an_sqrt                # Ty → dY
+        A[2 * npts:3 * npts, 2] = an_sqrt            # Tz → dZ
+        A[npts:2 * npts, 3] = -coor[:, 2] * an_sqrt  # Rx: dY = -Z·Rx
+        A[2 * npts:3 * npts, 3] = coor[:, 1] * an_sqrt   # dZ = +Y·Rx
+        A[0:npts, 4] = coor[:, 2] * an_sqrt          # Ry: dX = +Z·Ry
+        A[2 * npts:3 * npts, 4] = -coor[:, 0] * an_sqrt  # dZ = -X·Ry
+        A[0:npts, 5] = -coor[:, 1] * an_sqrt         # Rz: dX = -Y·Rz
+        A[npts:2 * npts, 5] = coor[:, 0] * an_sqrt   # dY = +X·Rz
 
-        # Seleccionar sólo los modos activos
         A_act = A[:, active]
-
-        # Vector de desplazamientos ponderados [dX*w | dY*w | dZ*w]
         b = (disp_corr * an_sqrt[:, np.newaxis]).ravel(order='F')
-        # ravel 'F' → primero todas las filas de dX, luego dY, luego dZ
-
-        # Mínimos cuadrados
         coef, *_ = np.linalg.lstsq(A_act, b, rcond=None)
         pos[active] = coef
 
-        # Restar el campo de sólido rígido a los desplazamientos
-        # A_act @ coef tiene las mismas unidades que an_sqrt * disp
-        rigid_weighted = (A_act @ coef).reshape(npts, 3, order='F')
-        # Evitar 0/0 en nodos aislados: para ellos an_sqrt=0 y
-        # rigid_weighted=0 también, pero 0/0=NaN propagaría NaN al resultado.
-        safe_w = np.where(an_sqrt > 0, an_sqrt, 1.0)
-        disp_corr -= rigid_weighted / safe_w[:, np.newaxis]
+        # Campo rígido SIN ponderar (válido también en nodos de área nula)
+        rigid = np.zeros_like(disp_corr)
+        for k, idx in enumerate(active):
+            c = coef[k]
+            if idx == 0:
+                rigid[:, 0] += c
+            elif idx == 1:
+                rigid[:, 1] += c
+            elif idx == 2:
+                rigid[:, 2] += c
+            elif idx == 3:
+                rigid[:, 1] += -coor[:, 2] * c
+                rigid[:, 2] += coor[:, 1] * c
+            elif idx == 4:
+                rigid[:, 0] += coor[:, 2] * c
+                rigid[:, 2] += -coor[:, 0] * c
+            elif idx == 5:
+                rigid[:, 0] += -coor[:, 1] * c
+                rigid[:, 1] += coor[:, 0] * c
+        disp_corr -= rigid
 
-    # Desplazamiento normal = proyección sobre la normal de superficie
     un = (disp_corr * node_norms).sum(axis=1)
-
+    un[an <= 0] = np.nan          # nodos fuera de la triangulación
     return un, an, pos
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  MÁSCARAS DE APERTURA Y NORMALIZACIÓN DE COORDENADAS
+#  APERTURAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def aperture_circular(xy, radius=None):
+def surface_centroid(xy, an=None):
+    """
+    Centro geométrico de la superficie mallada.  Con áreas nodales es el
+    centroide ponderado por área (independiente de la densidad de malla);
+    sin ellas, la media de los nodos.
+    """
+    if an is not None and np.sum(an) > 0:
+        w = an / np.sum(an)
+        return float(w @ xy[:, 0]), float(w @ xy[:, 1])
+    return float(xy[:, 0].mean()), float(xy[:, 1].mean())
+
+
+def _center(xy, center):
+    if center is None:
+        return float(xy[:, 0].mean()), float(xy[:, 1].mean())
+    return float(center[0]), float(center[1])
+
+
+def aperture_circular(xy, radius=None, center=None):
     """
     Máscara circular.
 
-    Las coordenadas se centran automáticamente en el centroide de los nodos,
-    por lo que el origen del fichero FEM puede estar en cualquier posición.
+    center : (xc, yc) o None (media de los nodos)
+    radius : radio de normalización; None → distancia máxima al centro
 
-    Parámetros
-    ----------
-    xy     : ndarray (N, 2)   Coordenadas X, Y de los nodos
-    radius : float o None     Radio de la apertura; si None → máximo radial
-                              medido desde el centroide
-
-    Devuelve
-    --------
-    mask   : ndarray (N,) bool
-    r_norm : ndarray (M,)     Radio normalizado al radio de la apertura [0, 1]
-    theta  : ndarray (M,)     Ángulo azimutal [rad]
+    Devuelve mask (N,), r_norm (M,), theta (M,)
     """
-    x, y = xy[:, 0], xy[:, 1]
-    # Centrar en el centroide para que la apertura no dependa del origen FEM
-    xc, yc = x - x.mean(), y - y.mean()
+    cx, cy = _center(xy, center)
+    xc, yc = xy[:, 0] - cx, xy[:, 1] - cy
     r = np.hypot(xc, yc)
     if radius is None:
         radius = r.max()
-    mask = r <= radius
-    r_norm = r[mask] / radius
-    theta  = np.arctan2(yc[mask], xc[mask])
-    return mask, r_norm, theta
+    mask = r <= radius * (1 + 1e-9)
+    return mask, r[mask] / radius, np.arctan2(yc[mask], xc[mask])
 
 
-def aperture_square(xy, side=None):
+def aperture_rectangular(xy, width=None, height=None, center=None):
     """
-    Máscara cuadrada (|xc| ≤ L/2 y |yc| ≤ L/2).
-    La normalización radial usa el radio de la circunferencia circunscrita (L/2·√2).
+    Máscara rectangular (lados paralelos a X e Y) y coordenadas normalizadas
+    a [-1, 1] para Chebyshev.
 
-    Las coordenadas se centran automáticamente en el centroide de los nodos.
-
-    Parámetros
-    ----------
-    xy   : ndarray (N, 2)
-    side : float o None     Longitud del lado; si None → 2·max(|xc|, |yc|)
-                            medido desde el centroide
+    Devuelve mask (N,), x_norm (M,), y_norm (M,)
     """
-    x, y = xy[:, 0], xy[:, 1]
-    # Centrar en el centroide
-    xc, yc = x - x.mean(), y - y.mean()
-    if side is None:
-        side = 2.0 * max(np.abs(xc).max(), np.abs(yc).max())
-    half = side / 2.0
-    mask = (np.abs(xc) <= half) & (np.abs(yc) <= half)
-    r_circ = half * math.sqrt(2)   # circunferencia circunscrita
-    r_norm = np.hypot(xc[mask], yc[mask]) / r_circ
-    theta  = np.arctan2(yc[mask], xc[mask])
-    return mask, r_norm, theta
-
-
-def aperture_rectangular(xy, width=None, height=None):
-    """
-    Máscara rectangular (|xc| ≤ W/2 y |yc| ≤ H/2).
-    La normalización radial usa la diagonal del rectángulo / 2.
-
-    Las coordenadas se centran automáticamente en el centroide de los nodos.
-
-    Parámetros
-    ----------
-    xy     : ndarray (N, 2)
-    width  : float o None   Anchura (X); si None → 2·max|xc| desde el centroide
-    height : float o None   Altura  (Y); si None → 2·max|yc| desde el centroide
-    """
-    x, y = xy[:, 0], xy[:, 1]
-    # Centrar en el centroide
-    xc, yc = x - x.mean(), y - y.mean()
-    if width  is None:
-        width  = 2.0 * np.abs(xc).max()
+    cx, cy = _center(xy, center)
+    xc, yc = xy[:, 0] - cx, xy[:, 1] - cy
+    if width is None:
+        width = 2.0 * np.abs(xc).max()
     if height is None:
         height = 2.0 * np.abs(yc).max()
     hw, hh = width / 2.0, height / 2.0
-    mask = (np.abs(xc) <= hw) & (np.abs(yc) <= hh)
-    r_circ = math.hypot(hw, hh)   # semidiagonal del rectángulo
-    r_norm = np.hypot(xc[mask], yc[mask]) / r_circ
-    theta  = np.arctan2(yc[mask], xc[mask])
-    return mask, r_norm, theta
+    tol = 1 + 1e-9
+    mask = (np.abs(xc) <= hw * tol) & (np.abs(yc) <= hh * tol)
+    return mask, np.clip(xc[mask] / hw, -1, 1), np.clip(yc[mask] / hh, -1, 1)
 
 
-def aperture_hexagonal(xy, circumradius=None):
+def aperture_hexagonal(xy, circumradius=None, center=None):
     """
-    Máscara hexagonal regular (orientación con vértice en el eje X positivo).
-    Prueba: para cada uno de los 6 lados, la distancia al lado ≤ apotema.
-
-    Las coordenadas se centran automáticamente en el centroide de los nodos,
-    por lo que el origen del fichero FEM puede estar en cualquier posición.
-
-    Parámetros
-    ----------
-    xy            : ndarray (N, 2)
-    circumradius  : float o None   Circunradio (vértice a centro) en las mismas
-                                   unidades que xy; si None → máximo radial
-                                   medido desde el centroide
+    Máscara hexagonal regular (vértice en +X).  PENDIENTE: la base de
+    polinomios de segmento hexagonal no está implementada, por lo que esta
+    apertura no es seleccionable todavía.
     """
-    x, y = xy[:, 0], xy[:, 1]
-    # Centrar en el centroide para que el hexágono quede correctamente posicionado
-    xc, yc = x - x.mean(), y - y.mean()
+    cx, cy = _center(xy, center)
+    xc, yc = xy[:, 0] - cx, xy[:, 1] - cy
     if circumradius is None:
         circumradius = np.hypot(xc, yc).max()
-    apothem = circumradius * math.sqrt(3) / 2.0   # distancia centro–lado
-
-    # Condiciones de inclusión para hexágono regular orientado vértice-derecha
+    apothem = circumradius * math.sqrt(3) / 2.0
     c1 = np.abs(yc) <= apothem
     c2 = np.abs(xc * (math.sqrt(3) / 2) + yc * 0.5) <= apothem
     c3 = np.abs(xc * (math.sqrt(3) / 2) - yc * 0.5) <= apothem
     mask = c1 & c2 & c3
-
-    r_norm = np.hypot(xc[mask], yc[mask]) / circumradius
-    theta  = np.arctan2(yc[mask], xc[mask])
-    return mask, r_norm, theta
+    return (mask, np.hypot(xc[mask], yc[mask]) / circumradius,
+            np.arctan2(yc[mask], xc[mask]))
 
 
-# Registro de funciones de apertura disponibles
-APERTURE_FUNCTIONS = {
-    'circular':    aperture_circular,
-    'square':      aperture_square,
-    'rectangular': aperture_rectangular,
-    'hexagonal':   aperture_hexagonal,
-}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  AJUSTE DE ZERNIKE SOBRE DATOS DISPERSOS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def zernike_fit_scatter(un, r_norm, theta, terms, norm='pico'):
+def apply_aperture(xy, un, an, aperture, radius=None, width=None, height=None,
+                   center=None):
     """
-    Ajuste por mínimos cuadrados de polinomios de Zernike sobre datos dispersos.
+    Selecciona los nodos de la apertura y devuelve sus coordenadas
+    normalizadas para la base correspondiente.
 
-    Parámetros
-    ----------
-    un     : ndarray (M,)     Desplazamiento normal en los puntos de la apertura
-    r_norm : ndarray (M,)     Radio normalizado [0, 1]
-    theta  : ndarray (M,)     Ángulo azimutal [rad]
-    terms  : list[int]        Índices ISO de los términos a ajustar
-    norm   : str              'pico' o 'rms'
+    Se excluyen los nodos con un NaN (sin área en la triangulación).
+    El centro por defecto es el centroide ponderado por área.
 
     Devuelve
     --------
-    coeffs   : ndarray (len(terms),)   Coeficientes de Zernike
-    residual : ndarray (M,)            Residuo tras el ajuste
-    A        : ndarray (M, len(terms)) Matriz de diseño (para diagnóstico)
+    mask   : ndarray (N,) bool
+    coords : dict  ('r','theta') para Zernike o ('x','y') para Chebyshev
+    geom   : dict  geometría de la apertura (para dibujar el contorno)
     """
-    A = build_zernike_matrix(terms, r_norm, theta, norm)
-    coeffs, *_ = np.linalg.lstsq(A, un, rcond=None)
-    residual = un - A @ coeffs
+    if aperture in APERTURES_PENDING:
+        raise NotImplementedError(
+            f"La apertura '{aperture}' todavía no está implementada.")
+    valid = np.isfinite(un) & (an > 0)
+    if center is None:
+        center = surface_centroid(xy[valid], an[valid])
+    cx, cy = center
+
+    if aperture == 'circular':
+        if radius is None:
+            radius = float(np.hypot(xy[valid, 0] - cx, xy[valid, 1] - cy).max())
+        mask, r, th = aperture_circular(xy, radius, center)
+        keep = valid[mask]
+        mask &= valid
+        coords = {'r': r[keep], 'theta': th[keep]}
+        geom = {'type': 'circular', 'center': center, 'radius': radius}
+    elif aperture == 'rectangular':
+        if width is None:
+            width = 2.0 * float(np.abs(xy[valid, 0] - cx).max())
+        if height is None:
+            height = 2.0 * float(np.abs(xy[valid, 1] - cy).max())
+        mask, xn, yn = aperture_rectangular(xy, width, height, center)
+        keep = valid[mask]
+        mask &= valid
+        coords = {'x': xn[keep], 'y': yn[keep]}
+        geom = {'type': 'rectangular', 'center': center,
+                'width': width, 'height': height}
+    else:
+        raise ValueError(f"Apertura desconocida: {aperture}")
+    return mask, coords, geom
+
+
+def aperture_area(geom):
+    """Área teórica de la apertura."""
+    if geom['type'] == 'circular':
+        return math.pi * geom['radius'] ** 2
+    if geom['type'] == 'rectangular':
+        return geom['width'] * geom['height']
+    return None
+
+
+def mesh_coverage(xy, an, geom):
+    """
+    Fracción del área teórica de la apertura cubierta por la malla
+    (casco convexo de los nodos válidos).  < ~0.8 indica modelo parcial.
+    """
+    from scipy.spatial import ConvexHull
+    pts = xy[an > 0]
+    area_ap = aperture_area(geom)
+    if len(pts) < 3 or not area_ap:
+        return None
+    try:
+        return ConvexHull(pts).volume / area_ap      # en 2D .volume = área
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AJUSTE POLINÓMICO SOBRE DATOS DISPERSOS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def fit_weighted_ls(u, A, weights=None):
+    """
+    Mínimos cuadrados (ponderados si `weights` no es None):
+        minimizar  Σ wᵢ (Aᵢ·c − uᵢ)²
+    Devuelve coeffs, residual.
+    """
+    if weights is not None:
+        w = np.sqrt(np.asarray(weights, dtype=float))
+        coeffs, *_ = np.linalg.lstsq(A * w[:, np.newaxis], u * w, rcond=None)
+    else:
+        coeffs, *_ = np.linalg.lstsq(A, u, rcond=None)
+    return coeffs, u - A @ coeffs
+
+
+def fit_surface(u, coords, basis, terms, norm='pico', weights=None):
+    """
+    Ajuste de la base `basis` ('fringe' | 'noll' | 'chebyshev').
+    Por defecto debe pasarse weights = áreas nodales (WLS, como SurfCalc).
+
+    Devuelve coeffs, residual, A
+    """
+    A = build_design_matrix(basis, terms, coords, norm)
+    coeffs, residual = fit_weighted_ls(u, A, weights)
     return coeffs, residual, A
+
+
+def zernike_fit_scatter(un, r_norm, theta, terms, norm='pico', weights=None,
+                        convention='fringe'):
+    """
+    Ajuste de Zernike (compatibilidad con versiones anteriores).
+    weights = áreas nodales → WLS ;  None → LS ordinario.
+    """
+    return fit_surface(un, {'r': r_norm, 'theta': theta}, convention,
+                       terms, norm, weights)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -556,62 +813,120 @@ def zernike_fit_scatter(un, r_norm, theta, terms, norm='pico'):
 
 def rms_area_weighted(values, an):
     """
-    RMS ponderado por área nodal.
-
-    RMS = sqrt( Σ an_i · u_i² )    con  Σ an_i = 1
+    RMS ponderado por área:  sqrt( Σ aᵢ uᵢ² / Σ aᵢ ).  Ignora NaN.
+    (No resta la media; ver std_area_weighted.)
     """
-    return math.sqrt(float(np.sum(an * values ** 2)))
+    v = np.asarray(values, dtype=float)
+    a = np.asarray(an, dtype=float)
+    ok = np.isfinite(v) & (a > 0)
+    if not ok.any():
+        return float('nan')
+    return math.sqrt(float(np.sum(a[ok] * v[ok] ** 2) / np.sum(a[ok])))
+
+
+def std_area_weighted(values, an):
+    """RMS respecto a la media ponderada por área (desviación típica)."""
+    v = np.asarray(values, dtype=float)
+    a = np.asarray(an, dtype=float)
+    ok = np.isfinite(v) & (a > 0)
+    if not ok.any():
+        return float('nan')
+    mean = np.sum(a[ok] * v[ok]) / np.sum(a[ok])
+    return math.sqrt(float(np.sum(a[ok] * (v[ok] - mean) ** 2) / np.sum(a[ok])))
 
 
 def peak_to_valley(values):
-    """Pico a valle."""
-    return float(values.max() - values.min())
+    """Pico a valle (ignora NaN)."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    return float(v.max() - v.min()) if v.size else float('nan')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ENTRADA/SALIDA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def load_fem_data(fname):
-    """
-    Carga el fichero TXT de resultados FEM.
-
-    Columnas esperadas: node_id  X  Y  Z  dX  dY  dZ
-    Si hay más columnas, se ignoran las extras.
-
-    Devuelve
-    --------
-    node : ndarray (N,)     Identificadores de nodo
-    coor : ndarray (N, 3)   Coordenadas X, Y, Z
-    disp : ndarray (N, 3)   Desplazamientos dX, dY, dZ
-    """
+def _read_table(fname):
     data = np.loadtxt(fname)
     if data.ndim == 1:
         data = data[np.newaxis, :]
-    ncols = data.shape[1]
-    if ncols >= 7:
-        # Formato completo: node_id  X  Y  Z  dX  dY  dZ  [extras…]
-        return data[:, 0], data[:, 1:4], data[:, 4:7]
-    elif ncols == 6:
-        # Sin node_id: X  Y  Z  dX  dY  dZ
-        node = np.arange(len(data), dtype=float)
-        return node, data[:, 0:3], data[:, 3:6]
-    else:
+    if data.shape[1] < 6:
         raise ValueError(
             f"El fichero debe tener 6 columnas (X Y Z dX dY dZ) o "
-            f"7 columnas (node_id X Y Z dX dY dZ). Encontradas: {ncols}"
-        )
+            f"7 columnas (id X Y Z dX dY dZ). Encontradas: {data.shape[1]}")
+    return data
 
 
-def print_zernike_table():
-    """Imprime la tabla de nombres ISO de Zernike."""
-    print("\n  Índices ISO de Zernike (los más usados en óptica):")
-    print(f"  {'Índice':>7}  {'n':>3}  {'m':>4}  Nombre")
-    print(f"  {'-------':>7}  {'---':>3}  {'----':>4}  ------")
-    max_t = max(ZERNIKE_NAMES.keys()) + 1
-    n_arr, m_arr = zernike_iso2nm(max_t)
-    for t, name in ZERNIKE_NAMES.items():
-        print(f"  Z{t:>5d}   {n_arr[t]:>3d}  {m_arr[t]:>4d}  {name}")
+def _case_ids(data):
+    """
+    Si la primera columna tiene valores repetidos no puede ser un número de
+    nodo: es un identificador de CASO DE CARGA (ficheros con varios casos
+    apilados, como AARESULTADOS2.TXT, que proc.m separa en bloques).
+    Devuelve la lista de casos, o None si el fichero tiene un único caso.
+    """
+    if data.shape[1] < 7:
+        return None
+    ids = data[:, 0]
+    uniq = np.unique(ids)
+    if len(uniq) == len(ids) or len(uniq) == 1:
+        return None
+    return [int(v) if float(v).is_integer() else float(v) for v in uniq]
+
+
+def list_load_cases(fname):
+    """Casos de carga presentes en el fichero (None si sólo hay uno)."""
+    return _case_ids(_read_table(fname))
+
+
+def load_fem_data(fname, case=None):
+    """
+    Carga el fichero TXT de resultados FEM.
+      7+ columnas : id X Y Z dX dY dZ [extras ignoradas]
+      6 columnas  : X Y Z dX dY dZ
+
+    Si la primera columna contiene valores repetidos se interpreta como
+    número de caso de carga y hay que indicar `case`; si no se indica se
+    produce un error (mezclar casos daría resultados sin sentido).
+
+    Devuelve node (N,), coor (N, 3), disp (N, 3)
+    """
+    data = _read_table(fname)
+    cases = _case_ids(data)
+    if cases is not None:
+        if case is None:
+            raise ValueError(
+                f"El fichero contiene {len(cases)} casos de carga apilados "
+                f"(primera columna = {cases}).  Indica cuál analizar "
+                f"(--case en línea de comandos o 'Caso de carga' en la GUI).")
+        sel = data[:, 0] == float(case)
+        if not sel.any():
+            raise ValueError(f"El caso {case} no existe en el fichero. Casos: {cases}")
+        data = data[sel]
+        return np.arange(len(data), dtype=float), data[:, 1:4], data[:, 4:7]
+    if data.shape[1] >= 7:
+        return data[:, 0], data[:, 1:4], data[:, 4:7]
+    return np.arange(len(data), dtype=float), data[:, 0:3], data[:, 3:6]
+
+
+def check_duplicates(coor, tol_rel=1e-9):
+    """Número de nodos con coordenadas XY repetidas."""
+    span = float(np.ptp(coor[:, :2], axis=0).max()) or 1.0
+    q = np.round(coor[:, :2] / (span * tol_rel)).astype(np.int64)
+    _, counts = np.unique(q, axis=0, return_counts=True)
+    return int((counts - 1).clip(min=0).sum())
+
+
+def print_term_table(basis, nterms=21):
+    """Imprime la tabla de términos de la base."""
+    titles = {'fringe': "Zernike Fringe (índices del script 0-based)",
+              'noll': "Zernike Noll (índices 1-based)",
+              'chebyshev': "Chebyshev 2D rectangular (índices 0-based)"}
+    print(f"\n  {titles[basis]}")
+    print(f"  {'Término':>8}  {'SurfCalc #':>10}  {'Orden':>12}  Nombre")
+    print(f"  {'-'*8:>8}  {'-'*10:>10}  {'-'*12:>12}  ------")
+    for t in default_terms(basis, nterms):
+        lab, sc, order, name = term_info(basis, t)
+        print(f"  {lab:>8}  {sc:>10d}  {order:>12}  {name}")
 
 
 def print_rigid_body_results(pos, rigidmodes):
@@ -624,14 +939,15 @@ def print_rigid_body_results(pos, rigidmodes):
             print(f"    {name} = {val:+.6g}")
 
 
-def print_zernike_results(terms, coeffs, n_arr, m_arr):
-    """Imprime tabla de coeficientes de Zernike."""
-    print(f"\n  {'Term':>6}  {'n':>3}  {'m':>4}  {'Coeficiente':>14}  Nombre")
-    print(f"  {'------':>6}  {'---':>3}  {'----':>4}  {'-------------':>14}  -----")
-    for i, t in enumerate(terms):
-        name = ZERNIKE_NAMES.get(t, "")
-        print(f"  Z{t:>5d}   {n_arr[t]:>3d}  {m_arr[t]:>4d}  "
-              f"{coeffs[i]:>14.6g}  {name}")
+def format_fit_table(basis, terms, coeffs):
+    """Tabla de coeficientes como lista de líneas de texto."""
+    lines = [f"  {'Término':>8}  {'SurfCalc #':>10}  {'Orden':>12}  "
+             f"{'Coeficiente':>14}  Nombre",
+             f"  {'-'*8:>8}  {'-'*10:>10}  {'-'*12:>12}  {'-'*14:>14}  ------"]
+    for t, c in zip(terms, coeffs):
+        lab, sc, order, name = term_info(basis, t)
+        lines.append(f"  {lab:>8}  {sc:>10d}  {order:>12}  {c:>+14.6e}  {name}")
+    return lines
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -639,32 +955,30 @@ def print_zernike_results(terms, coeffs, n_arr, m_arr):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def plot_results(coor, un, mask, residual, aperture_name, output_file='fem_analysis.png'):
-    """Genera figura con mapa de desplazamiento y residuo de Zernike."""
+    """Figura con el desplazamiento normal y el residuo del ajuste."""
     import matplotlib.pyplot as plt
     import matplotlib.tri as mtri
 
     x, y = coor[:, 0], coor[:, 1]
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-    # Panel izquierdo: desplazamiento normal completo
-    triang_full = mtri.Triangulation(x, y)
-    cf1 = axes[0].tricontourf(triang_full, un, levels=64, cmap='RdBu_r')
+    ok = np.isfinite(un)
+    triang_full = mtri.Triangulation(x[ok], y[ok])
+    cf1 = axes[0].tricontourf(triang_full, un[ok], levels=64, cmap='RdBu_r')
     plt.colorbar(cf1, ax=axes[0], label='Desplazamiento normal')
     axes[0].set_title('Desplazamiento normal\n(tras quitar sólido rígido)')
     axes[0].set_aspect('equal')
     axes[0].set_xlabel('X')
     axes[0].set_ylabel('Y')
 
-    # Panel derecho: residuo del ajuste de Zernike (sólo apertura)
     un_res_full = np.full(len(coor), np.nan)
     un_res_full[mask] = residual
-
-    valid = ~np.isnan(un_res_full)
+    valid = np.isfinite(un_res_full)
     if valid.sum() > 3:
         triang_ap = mtri.Triangulation(x[valid], y[valid])
         cf2 = axes[1].tricontourf(triang_ap, un_res_full[valid], levels=64, cmap='RdBu_r')
-        plt.colorbar(cf2, ax=axes[1], label='Residuo Zernike')
-    axes[1].set_title(f'Residuo tras ajuste Zernike\n(apertura {aperture_name})')
+        plt.colorbar(cf2, ax=axes[1], label='Residuo')
+    axes[1].set_title(f'Residuo tras el ajuste\n(apertura {aperture_name})')
     axes[1].set_aspect('equal')
     axes[1].set_xlabel('X')
     axes[1].set_ylabel('Y')
@@ -685,181 +999,202 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.split("Uso")[0].strip(),
     )
-
     parser.add_argument(
         "fname", nargs="?",
-        help="Fichero TXT con resultados FEM (columnas: node X Y Z dX dY dZ)"
-    )
+        help="Fichero TXT con resultados FEM (node X Y Z dX dY dZ  ó  X Y Z dX dY dZ)")
+    parser.add_argument(
+        "--case", type=float, default=None,
+        help="Caso de carga a analizar si el fichero contiene varios casos "
+             "apilados (primera columna = nº de caso).")
     parser.add_argument(
         "--rigid", nargs=6, type=int, default=[0, 0, 1, 0, 0, 0],
         metavar=("Tx", "Ty", "Tz", "Rx", "Ry", "Rz"),
-        help="Modos de sólido rígido a eliminar: 0=conservar, 1=eliminar. "
-             "Orden: Tx Ty Tz Rx Ry Rz.  Default: 0 0 1 0 0 0 (sólo Tz)"
-    )
+        help="Modos de sólido rígido a eliminar (0/1).  Default: 0 0 1 0 0 0")
     parser.add_argument(
-        "--area-threshold", type=float, default=1.0,
-        help="Umbral de área (unidades del modelo) para filtrar triángulos "
-             "degenerados en la triangulación.  Default: 1.0"
-    )
+        "--area-threshold", type=float, default=0.0,
+        help="Área mínima ABSOLUTA (unidades²) de los triángulos de Delaunay. "
+             "Default: 0 (sólo se descartan triángulos degenerados).")
     parser.add_argument(
-        "--aperture",
-        choices=list(APERTURE_FUNCTIONS.keys()),
+        "--frame", choices=["global", "bestfit"], default="global",
+        help="Sistema de referencia: 'global' (Z del fichero = eje óptico, como "
+             "el MATLAB original) o 'bestfit' (girar a la normal del plano "
+             "best-fit, como SurfCalc 'Best-fit Plane (Auto)').  No usar "
+             "'bestfit' con modelos parciales de espejos curvos ni segmentos "
+             "fuera de eje.  Default: global")
+    parser.add_argument(
+        "--center", nargs=2, type=float, default=None, metavar=("XC", "YC"),
+        help="Centro de la apertura.  Default: centroide de área de la malla "
+             "(para modelos parciales/simetría hay que darlo, p. ej. 0 0).")
+    parser.add_argument(
+        "--aperture", choices=list(APERTURE_BASIS) + list(APERTURES_PENDING),
         default="circular",
-        help="Forma de la apertura para el ajuste de Zernike.  Default: circular"
-    )
+        help="Forma de la apertura: circular (Zernike) o rectangular (Chebyshev). "
+             "'annular' y 'hexagonal' están pendientes de implementar.")
     parser.add_argument(
-        "--radius", type=float, default=None,
-        help="Radio de la apertura circular (mismas unidades que las coordenadas). "
-             "Default: radio máximo de los datos"
-    )
+        "--convention", choices=ZERNIKE_CONVENTIONS, default="fringe",
+        help="Convención de Zernike para la apertura circular.  Default: fringe")
+    parser.add_argument("--radius", type=float, default=None,
+                        help="Radio de normalización (circular).  Default: auto")
+    parser.add_argument("--width", type=float, default=None,
+                        help="Anchura X (rectangular).  Default: auto")
+    parser.add_argument("--height", type=float, default=None,
+                        help="Altura Y (rectangular).  Default: auto")
     parser.add_argument(
-        "--side", type=float, default=None,
-        help="Lado de la apertura cuadrada.  Default: ajuste automático"
-    )
+        "--terms", nargs="+", type=int, default=None,
+        help="Índices de los términos a ajustar en la convención de la base "
+             "(Fringe y Chebyshev 0-based, Noll 1-based).  Default: pistón, "
+             "tilts y desenfoque/curvaturas.  Ver --list-terms")
     parser.add_argument(
-        "--width", type=float, default=None,
-        help="Anchura (X) de la apertura rectangular.  Default: ajuste automático"
-    )
+        "--nterms", type=int, default=None,
+        help="Ajustar los N primeros términos de la base (igual que la GUI). "
+             "Alternativa a --terms.")
+    parser.add_argument("--norm", choices=["pico", "rms"], default="pico",
+                        help="Normalización de los polinomios.  Default: pico")
     parser.add_argument(
-        "--height", type=float, default=None,
-        help="Altura (Y) de la apertura rectangular.  Default: ajuste automático"
-    )
-    parser.add_argument(
-        "--hexradius", type=float, default=None,
-        help="Circunradio de la apertura hexagonal.  Default: radio máximo de los datos"
-    )
-    parser.add_argument(
-        "--terms", nargs="+", type=int, default=[0, 1, 2, 3],
-        help="Índices ISO de los términos de Zernike a ajustar. "
-             "Default: 0 1 2 3  (pistón, tip, tilt, foco). "
-             "Usar --list-terms para ver la tabla completa"
-    )
-    parser.add_argument(
-        "--norm", choices=["pico", "rms"], default="pico",
-        help="Normalización de los polinomios de Zernike.  Default: pico"
-    )
-    parser.add_argument(
-        "--no-zernike", action="store_true",
-        help="Omitir la descomposición en Zernike (sólo RMS de sólido rígido)"
-    )
-    parser.add_argument(
-        "--plot", action="store_true",
-        help="Generar y guardar figura de resultados"
-    )
-    parser.add_argument(
-        "--plot-file", default="fem_analysis.png",
-        help="Nombre del fichero de imagen.  Default: fem_analysis.png"
-    )
-    parser.add_argument(
-        "--list-terms", action="store_true",
-        help="Mostrar tabla de nombres ISO de Zernike y salir"
-    )
+        "--no-wls", action="store_true",
+        help="Ajuste por LS ordinario en vez de WLS ponderado por área "
+             "(por defecto WLS, como SurfCalc).")
+    parser.add_argument("--no-zernike", action="store_true",
+                        help="Omitir el ajuste polinómico")
+    parser.add_argument("--plot", action="store_true",
+                        help="Generar y guardar figura de resultados")
+    parser.add_argument("--plot-file", default="fem_analysis.png",
+                        help="Fichero de imagen.  Default: fem_analysis.png")
+    parser.add_argument("--list-terms", action="store_true",
+                        help="Mostrar la tabla de términos de la base y salir")
 
     args = parser.parse_args()
 
-    # ── Modo consulta de tabla ────────────────────────────────────────────────
-    if args.list_terms:
-        print_zernike_table()
-        sys.exit(0)
+    if args.aperture in APERTURES_PENDING:
+        parser.error(f"La apertura '{args.aperture}' todavía no está implementada "
+                     f"(disponibles: {', '.join(APERTURE_BASIS)}).")
+    basis = basis_key(args.aperture, args.convention)
 
+    if args.list_terms:
+        print_term_table(basis)
+        sys.exit(0)
     if args.fname is None:
         parser.error("Se requiere el nombre del fichero de datos FEM.")
 
-    # ── Carga de datos ────────────────────────────────────────────────────────
-    print(f"\n{'═'*60}")
-    print(f"  fem_mirror_analysis.py")
-    print(f"{'═'*60}")
+    if args.nterms is not None and args.terms is not None:
+        parser.error("Usa --terms o --nterms, no ambos.")
+    if args.nterms is not None:
+        if args.nterms <= 0:
+            args.no_zernike = True
+            args.terms = [0]
+        else:
+            args.terms = default_terms(basis, args.nterms)
+    if args.terms is None:
+        args.terms = default_terms(basis, 6 if basis == 'chebyshev' else 4)
+    terms = sorted(set(args.terms))
+    try:
+        for t in terms:
+            term_info(basis, t)
+    except ValueError as e:
+        parser.error(str(e))
+
+    # ── Carga ────────────────────────────────────────────────────────────────
+    print(f"\n{'═'*60}\n  fem_mirror_analysis.py\n{'═'*60}")
     print(f"\n  Leyendo: {args.fname}")
-    node, coor, disp = load_fem_data(args.fname)
-    print(f"  Nodos leídos: {len(node)}")
-    print(f"  X ∈ [{coor[:,0].min():.4g}, {coor[:,0].max():.4g}]")
-    print(f"  Y ∈ [{coor[:,1].min():.4g}, {coor[:,1].max():.4g}]")
-    print(f"  Z ∈ [{coor[:,2].min():.4g}, {coor[:,2].max():.4g}]")
+    try:
+        _, coor, disp = load_fem_data(args.fname, args.case)
+    except ValueError as e:
+        parser.error(str(e))
+    if args.case is not None:
+        print(f"  Caso de carga: {args.case:g}")
+    print(f"  Nodos leídos: {len(coor)}")
+    for k, ax in enumerate("XYZ"):
+        print(f"  {ax} ∈ [{coor[:, k].min():.4g}, {coor[:, k].max():.4g}]")
+    ndup = check_duplicates(coor)
+    if ndup:
+        print(f"  ⚠  {ndup} nodos con XY repetidas: se excluyen del análisis "
+              f"(quedan fuera de la triangulación).")
 
-    # ── Extracción del sólido rígido ──────────────────────────────────────────
+    # ── Sistema de referencia ────────────────────────────────────────────────
+    nbf = compute_bestfit_normal(coor)
+    tilt = math.degrees(math.acos(min(1.0, float(nbf[2]))))
+    print(f"\n  Normal del plano best-fit: ({nbf[0]:+.5f}, {nbf[1]:+.5f}, "
+          f"{nbf[2]:+.5f})  → {tilt:.4f}° respecto a Z")
+    if args.frame == 'bestfit':
+        coor, disp, _ = to_local_frame(coor, disp)
+        print("  Sistema: plano best-fit (coordenadas y desplazamientos girados; "
+              "Tx..Rz en ese sistema).")
+    else:
+        print("  Sistema: global (Z del fichero = eje óptico).")
+        if tilt > 1.0:
+            print("  ⚠  La superficie está inclinada respecto a Z.  Si es plana o "
+                  "Z no es el eje óptico, usa --frame bestfit.")
+
+    # ── Sólido rígido ────────────────────────────────────────────────────────
     rigid_flags = tuple(args.rigid)
-    active_names = [n for n, f in zip(['Tx','Ty','Tz','Rx','Ry','Rz'], rigid_flags) if f]
+    active_names = [n for n, f in zip(['Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz'], rigid_flags) if f]
     print(f"\n  Eliminando sólido rígido: {active_names if active_names else 'ninguno'}")
-
     un, an, pos = extract_rigid(coor, disp, rigid_flags, args.area_threshold)
-
+    nbad = int(np.sum(~np.isfinite(un)))
+    if nbad:
+        print(f"  ⚠  {nbad} nodos sin área en la triangulación (excluidos).")
     print_rigid_body_results(pos, rigid_flags)
 
-    rms_total = rms_area_weighted(un, an)
-    pv_total  = peak_to_valley(un)
-    print(f"\n  ── Desplazamiento normal (apertura completa) ──")
-    print(f"  RMS (pond. por área): {rms_total:.6g}")
-    print(f"  Pico a valle (P-V):   {pv_total:.6g}")
+    print(f"\n  ── Desplazamiento normal (toda la superficie) ──")
+    print(f"  RMS (pond. por área):        {rms_area_weighted(un, an):.6g}")
+    print(f"  RMS resp. media (std):       {std_area_weighted(un, an):.6g}")
+    print(f"  Pico a valle (P-V):          {peak_to_valley(un):.6g}")
 
-    # ── Descomposición en Zernike ─────────────────────────────────────────────
+    # ── Ajuste polinómico ────────────────────────────────────────────────────
+    mask = np.zeros(len(coor), dtype=bool)
+    residual = np.array([])
     if not args.no_zernike:
-        print(f"\n  ── Descomposición en Zernike ──────────────────────────")
-        print(f"  Apertura: {args.aperture}")
-
-        # Construir máscara de apertura
-        xy = coor[:, :2]
-        ap_fn = APERTURE_FUNCTIONS[args.aperture]
-        ap_kwargs = {}
-        if args.aperture == 'circular' and args.radius is not None:
-            ap_kwargs['radius'] = args.radius
-        elif args.aperture == 'square' and args.side is not None:
-            ap_kwargs['side'] = args.side
-        elif args.aperture == 'rectangular':
-            if args.width  is not None:
-                ap_kwargs['width']  = args.width
-            if args.height is not None:
-                ap_kwargs['height'] = args.height
-        elif args.aperture == 'hexagonal' and args.hexradius is not None:
-            ap_kwargs['circumradius'] = args.hexradius
-
-        mask, r_norm, theta = ap_fn(xy, **ap_kwargs)
+        fam = "Chebyshev 2D" if basis == 'chebyshev' else f"Zernike {basis.capitalize()}"
+        print(f"\n  ── Ajuste {fam} — apertura {args.aperture} ──")
+        mask, coords, geom = apply_aperture(
+            coor[:, :2], un, an, args.aperture,
+            radius=args.radius, width=args.width, height=args.height,
+            center=tuple(args.center) if args.center else None)
+        print(f"  Centro de la apertura ({'usuario' if args.center else 'centroide de área'}): "
+              f"({geom['center'][0]:.4g}, {geom['center'][1]:.4g})")
+        if geom['type'] == 'circular':
+            print(f"  Radio de normalización: {geom['radius']:.6g}")
+        else:
+            print(f"  Anchura × altura: {geom['width']:.6g} × {geom['height']:.6g}")
         print(f"  Nodos en apertura: {mask.sum()} / {len(mask)}")
-
-        if mask.sum() < len(args.terms):
-            print("  ⚠  Advertencia: menos puntos que términos de Zernike. "
-                  "El ajuste puede ser inestable.")
+        cov = mesh_coverage(coor[:, :2], an, geom)
+        if cov is not None and cov < 0.82:
+            print(f"  ⚠  La malla cubre sólo ~{cov*100:.0f}% de la apertura: parece un "
+                  f"modelo parcial (simetría).  Revisa el centro (--center) y el radio.")
+        if mask.sum() < len(terms):
+            print("  ⚠  Menos puntos que términos: ajuste inestable.")
 
         un_ap = un[mask]
-        an_ap = an[mask] / an[mask].sum()   # renormalizar dentro de la apertura
+        an_ap = an[mask] / an[mask].sum()
+        coeffs, residual, _ = fit_surface(
+            un_ap, coords, basis, terms, args.norm,
+            weights=None if args.no_wls else an_ap)
+        print(f"  Método: {'LS ordinario (--no-wls)' if args.no_wls else 'WLS ponderado por área'}"
+              f" · normalización '{args.norm}'\n")
+        print("\n".join(format_fit_table(basis, terms, coeffs)))
 
-        # Ajuste
-        terms = sorted(set(args.terms))
-        coeffs, residual, _ = zernike_fit_scatter(un_ap, r_norm, theta, terms, args.norm)
-
-        max_t = max(terms) + 1
-        n_arr, m_arr = zernike_iso2nm(max_t)
-        print_zernike_results(terms, coeffs, n_arr, m_arr)
-
-        rms_ap_before = rms_area_weighted(un_ap, an_ap)
-        rms_ap_after  = rms_area_weighted(residual, an_ap)
-        pv_ap_before  = peak_to_valley(un_ap)
-        pv_ap_after   = peak_to_valley(residual)
-
+        rb, ra = rms_area_weighted(un_ap, an_ap), rms_area_weighted(residual, an_ap)
         print(f"\n  Dentro de la apertura — ANTES del ajuste:")
-        print(f"    RMS = {rms_ap_before:.6g}")
-        print(f"    P-V = {pv_ap_before:.6g}")
-        print(f"\n  Dentro de la apertura — TRAS el ajuste de Zernike:")
-        print(f"    RMS = {rms_ap_after:.6g}")
-        print(f"    P-V = {pv_ap_after:.6g}")
-        reduccion = (1.0 - rms_ap_after / rms_ap_before) * 100.0 if rms_ap_before > 0 else 0.0
-        print(f"    Reducción de RMS: {reduccion:.1f}%")
-    else:
-        mask = np.zeros(len(coor), dtype=bool)
-        residual = np.array([])
+        print(f"    RMS = {rb:.6g}   (std = {std_area_weighted(un_ap, an_ap):.6g})")
+        print(f"    P-V = {peak_to_valley(un_ap):.6g}")
+        print(f"\n  Dentro de la apertura — RESIDUO tras el ajuste:")
+        print(f"    RMS = {ra:.6g}   (std = {std_area_weighted(residual, an_ap):.6g})")
+        print(f"    P-V = {peak_to_valley(residual):.6g}")
+        if rb > 0:
+            print(f"    Reducción de RMS: {(1.0 - ra / rb) * 100.0:.1f}%")
 
     print(f"\n{'═'*60}\n")
 
-    # ── Gráficos ──────────────────────────────────────────────────────────────
     if args.plot:
-        if not args.no_zernike and mask.any():
+        if mask.any():
             plot_results(coor, un, mask, residual, args.aperture, args.plot_file)
         else:
-            # Sólo mapa de desplazamiento
             import matplotlib.pyplot as plt
             import matplotlib.tri as mtri
+            ok = np.isfinite(un)
             fig, ax = plt.subplots(figsize=(8, 7))
-            triang = mtri.Triangulation(coor[:, 0], coor[:, 1])
-            cf = ax.tricontourf(triang, un, levels=64, cmap='RdBu_r')
+            cf = ax.tricontourf(mtri.Triangulation(coor[ok, 0], coor[ok, 1]),
+                                un[ok], levels=64, cmap='RdBu_r')
             plt.colorbar(cf, ax=ax, label='Desplazamiento normal')
             ax.set_title('Desplazamiento normal (tras quitar sólido rígido)')
             ax.set_aspect('equal')

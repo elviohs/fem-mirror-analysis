@@ -7,9 +7,14 @@ Herramienta Python para el análisis de superficies de espejos a partir de resul
 - **Interfaz gráfica** (GUI tkinter) con paneles de configuración, log de resultados y figura embebida
 - **Modo consola** para integración en flujos de trabajo automatizados
 - Eliminación de modos de **sólido rígido** (Tx, Ty, Tz, Rx, Ry, Rz) configurables
-- **Ajuste de polinomios de Zernike** (normalización pico o RMS) con tabla de coeficientes
-- **Aperturas**: circular, cuadrada, rectangular, hexagonal
-- Cálculo de **RMS** y **PV** sobre la apertura
+- **Ajuste polinómico WLS ponderado por área** (como SurfCalc), normalización pico o RMS, con tabla de coeficientes e índice SurfCalc equivalente
+- **Aperturas y bases**:
+  - circular → Zernike, convención **Fringe** o **Noll**
+  - rectangular → **Chebyshev 2D** Tᵢ(x)·Tⱼ(y), ordenación triangular
+  - anular (Zernike de Mahajan) y hexagonal (polinomios de segmento) → pendientes
+- Sistema de referencia **global** (Z = eje óptico) o **plano best-fit**
+- Ficheros con **varios casos de carga** apilados (1ª columna = nº de caso)
+- Cálculo de **RMS**, **RMS respecto a la media** y **PV** sobre la apertura
 - Simulación de **PSF** (Point Spread Function) por transformada de Fourier
 - **Vista 3D interactiva** de la superficie de deformación con escala Z configurable
 - Coordenadas + valor interpolado al pasar el ratón por encima de los gráficos
@@ -55,12 +60,14 @@ Edita los parámetros en `ejecutar_fem_mirror.bat` y ejecútalo, o llama directa
 
 ```bash
 python fem_mirror_analysis.py datos.TXT \
-    --rigid 0 0 1 0 0 0 \
-    --aperture hexagonal \
-    --terms 3 \
+    --rigid 1 1 1 1 1 1 \
+    --aperture circular --convention noll \
+    --nterms 5 \
     --norm pico \
     --plot
 ```
+
+`--nterms N` ajusta los N primeros términos de la base (igual que la GUI); `--terms` permite elegir índices concretos (Fringe y Chebyshev 0-based, Noll 1-based). `python fem_mirror_analysis.py --list-terms --convention noll` muestra la tabla de términos.
 
 ## Formato del fichero de datos
 
@@ -84,4 +91,4 @@ donde `X`, `Y`, `Z` son las coordenadas del nodo y `dX`, `dY`, `dZ` los desplaza
 
 ## Origen
 
-Desarrollado en el [Instituto de Astrofísica de Canarias (IAC)](https://www.iac.es) para el análisis de superficies de espejos.
+Desarrollado en el [Instituto de Astrofísica de Canarias (IAC)](https://www.iac.es) para el análisis de superficies de espejos en el contexto del proyecto E-ELT.
