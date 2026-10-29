@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Datos FEM (pueden ser grandes y contienen rutas locales)
+*.TXT
+*.txt
+*.dat
+
+# Resultados generados
+*.png
+*.pdf
+
+# Excel y MATLAB legacy
+*.xls
+*.m
+*.fig
+*.asv
+
+# Windows
+Thumbs.db
+desktop.ini
