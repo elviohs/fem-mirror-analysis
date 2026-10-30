@@ -1439,7 +1439,14 @@ def elevation_sweep(coor, gbasis, angles_deg, ref_angle_deg=None, **pipeline_kw)
 #   · PVr según Evans (Opt. Eng. 48(4), 2009), PV del ajuste de Zernike +
 #     3·RMS del residuo, con los 37 términos Fringe (Z1–Z36 y Z(12,0)) que
 #     recomienda ISO 14999-4 según Schake & Ehret (Metrologia 63, 055007,
-#     2026).  ISO 10110-5:2015 lo limita a aperturas circulares; en las
+#     2026), y los casos límite de Murphy (Proc. SPIE 12778, 2023):
+#     PVr ≥ 6·RMS del residuo y PVr ≤ PV;
+#   · PV% (PV recortado) según Murphy (2023): PV del 99,8 % de la
+#     superficie, eligiendo cuánto se recorta de cada cola para que el PV
+#     sea mínimo.  Murphy recorta por número de puntos (píxeles iguales);
+#     aquí, con nodos de área distinta, se recorta por área nodal.  Se da
+#     para f_WD y f_WI: la revisión de ISO 10110-5 en preparación prevé
+#     admitir PV99.8% o PVr en lugar del PV máx−mín salvo indicación;  ISO 10110-5:2015 lo limita a aperturas circulares; en las
 #     demás se calcula (Zernike sobre el círculo que circunscribe la
 #     apertura, como en Schake & Ehret) pero se marca como fuera de norma;
 #   · pendientes (informativas): gradiente de f_WI en los triángulos de la
@@ -1461,6 +1468,34 @@ def _wfit(A, u, w):
 
 def _wrms(v, w):
     return math.sqrt(float(np.sum(w * v ** 2)))
+
+
+def pv_clipped(values, weights=None, keep=0.998):
+    """
+    PV recortado PV% (Murphy, Proc. SPIE 12778, 2023): PV de la fracción
+    `keep` de la superficie, quitando de las dos colas la combinación que
+    da el PV mínimo.  Con `weights` (áreas nodales) la fracción es de área.
+    """
+    v = np.asarray(values, float)
+    w = np.ones_like(v) if weights is None else np.asarray(weights, float)
+    ok = np.isfinite(v) & (w > 0)
+    v, w = v[ok], w[ok]
+    if v.size < 2:
+        return float('nan')
+    order = np.argsort(v)
+    v, w = v[order], w[order] / w.sum()
+    q = 1.0 - float(keep)
+    cw = np.concatenate([[0.0], np.cumsum(w)])          # cw[k] = área de los k primeros
+    best = float(v[-1] - v[0])
+    k = 0
+    while k < v.size and cw[k] <= q + 1e-12:
+        budget = q - cw[k]
+        j = int(np.searchsorted(cw, 1.0 - budget - 1e-12, side='left'))
+        hi = min(j, v.size) - 1
+        if hi > k:
+            best = min(best, float(v[hi] - v[k]))
+        k += 1
+    return best
 
 
 def iso10110_analysis(u, weights, coords, units='mm', xy=None, n_radial=12,
@@ -1501,7 +1536,11 @@ def iso10110_analysis(u, weights, coords, units='mm', xy=None, n_radial=12,
     }
     Z = build_zernike_matrix(list(range(37)), r, th, 'pico', 'fringe')
     _, fz = _wfit(Z, WD, w)
-    out['PVr'] = peak_to_valley(fz) + 3.0 * _wrms(WD - fz, w)
+    rms_z = _wrms(WD - fz, w)
+    pvr = max(peak_to_valley(fz) + 3.0 * rms_z, 6.0 * rms_z)     # Murphy (4)
+    out['PVr'] = min(pvr, out['PV'])                             # Murphy (3)
+    out['PV%'] = pv_clipped(WD, w)
+    out['PV%_I'] = pv_clipped(WI, w)
     out['PVr_in_scope'] = bool(circular)
     out['sphere_s'] = None
     if xy is not None and z is not None and len(z) >= 6:
@@ -1630,11 +1669,17 @@ def parse_iso10110(spec):
 
 
 def iso10110_check(res, tol):
-    """Lista de (clave, medido_nm, tolerancia_nm, cumple) de lo especificado."""
+    """
+    Lista de (clave, medido_nm, tolerancia_nm, cumple) de lo especificado.
+    Para B y PV se añade, como referencia, la evaluación con PV99.8%.
+    """
     rows = []
     for key in ISO_KEYS:
         if key in tol and res.get(key) is not None:
             rows.append((key, res[key], tol[key], res[key] <= tol[key]))
+            alt = {'B': 'PV%_I', 'PV': 'PV%'}.get(key)
+            if alt and res.get(alt) is not None:
+                rows.append((f"{key} (PV99.8%)", res[alt], tol[key], res[alt] <= tol[key]))
     return rows
 
 
@@ -1952,6 +1997,7 @@ def optics_summary(un_ap, w, coords, geom, xy_ap, units='mm', wavelength_nm=632.
             ("RMSa  rms(f_WRV)", iso['RMSa'])]
     if iso['PVr'] is not None:
         rows.append(("PVr  PV robusto" + ("" if iso['PVr_in_scope'] else " *"), iso['PVr']))
+    rows += [("PV99.8%  PV recortado f_WD", iso['PV%']), ("PV99.8%  PV recortado f_WI", iso['PV%_I'])]
     for name, v in rows:
         L.append(f"{name:<32} {v:11.3f} nm  {v/fr:9.4f} fr")
     if iso['PVr'] is not None and not iso['PVr_in_scope']:

@@ -61,7 +61,9 @@ TXT = {
                      ("PV total", "PV(f_WD)"), ("RMSt · total", "rms(f_WD)"),
                      ("RMSi · irregularidad", "rms(f_WI)"),
                      ("RMSa · irreg. asimétrica", "rms(f_WRV)"),
-                     ("PVr · PV robusto", "PVr(f_WD)")],
+                     ("PVr · PV robusto", "PVr(f_WD)"),
+                     ("PV99.8% · PV recortado", "PV%(f_WD)"),
+                     ("PV99.8% · irregularidad recortada", "PV%(f_WI)")],
         'iso_slope': "Pendiente de f_WI (muestreo de la malla FEM): RMS {r:.3g} µrad · máx {m:.3g} µrad.",
         'iso_notation': "Valores medidos en notación ISO: {s}",
         'iso_check': "Comprobación frente a la tolerancia {s}",
@@ -72,7 +74,11 @@ TXT = {
                        "aproximada paraxialmente por el término ρ²; parte rotacionalmente "
                        "invariante (cuyo óptimo rms es la media azimutal) aproximada por "
                        "polinomios pares en ρ hasta ρ^{nr}; PVr según Evans (Opt. Eng. 48(4), "
-                       "2009), PV del ajuste de 37 Zernike Fringe + 3·RMS del residuo."),
+                       "2009), PV del ajuste de 37 Zernike Fringe + 3·RMS del residuo, acotado "
+                       "entre 6·RMS del residuo y el PV (Murphy, Proc. SPIE 12778, 2023); PV99.8% "
+                       "= PV del 99,8 % del área quitando de cada cola lo que minimiza el PV "
+                       "(Murphy 2023). La revisión de ISO 10110-5 en preparación prevé admitir "
+                       "PVr o PV99.8% en lugar del PV máx−mín salvo indicación en el plano."),
         'pvr_scope': ("* PVr fuera del alcance de ISO 10110-5:2015 (sólo apertura circular): "
                       "calculado con Zernike sobre el círculo que circunscribe la apertura."),
         'fast': ("Superficie rápida (semiapertura/R ≈ {s:.2f}): la esfera best-fit paraxial "
@@ -196,7 +202,9 @@ TXT = {
                      ("Total PV", "PV(f_WD)"), ("RMSt · total", "rms(f_WD)"),
                      ("RMSi · irregularity", "rms(f_WI)"),
                      ("RMSa · asymmetric irregularity", "rms(f_WRV)"),
-                     ("PVr · robust PV", "PVr(f_WD)")],
+                     ("PVr · robust PV", "PVr(f_WD)"),
+                     ("PV99.8% · clipped PV", "PV%(f_WD)"),
+                     ("PV99.8% · clipped irregularity", "PV%(f_WI)")],
         'iso_slope': "Slope of f_WI (FEM mesh sampling): RMS {r:.3g} µrad · max {m:.3g} µrad.",
         'iso_notation': "Measured values in ISO notation: {s}",
         'iso_check': "Check against tolerance {s}",
@@ -207,7 +215,11 @@ TXT = {
                        "approximated paraxially by the ρ² term; rotationally invariant part (whose "
                        "rms optimum is the azimuthal mean) approximated by even polynomials in ρ "
                        "up to ρ^{nr}; PVr after Evans (Opt. Eng. 48(4), 2009), PV of a 37-term "
-                       "Fringe Zernike fit + 3·RMS of the residual."),
+                       "Fringe Zernike fit + 3·RMS of the residual, bounded between 6·RMS of the "
+                       "residual and PV (Murphy, Proc. SPIE 12778, 2023); PV99.8% = PV of 99.8 % "
+                       "of the area, clipping from each tail so as to minimise PV (Murphy 2023). "
+                       "The ISO 10110-5 revision in preparation plans to allow PVr or PV99.8% "
+                       "instead of max−min PV unless the drawing states otherwise."),
         'pvr_scope': ("* PVr outside the scope of ISO 10110-5:2015 (circular apertures only): "
                       "computed with Zernike over the circle circumscribing the aperture."),
         'fast': ("Fast surface (semi-aperture/R ≈ {s:.2f}): the paraxial best-fit sphere may "
@@ -735,7 +747,7 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
         doc.add_heading(T['s_iso'].format(k=k_sec), level=1)
         k_sec += 1
         doc.add_paragraph(T['iso_text'].format(fr=fr))
-        keys = ['A', 'B', 'C', 'PV', 'RMSt', 'RMSi', 'RMSa', 'PVr']
+        keys = ['A', 'B', 'C', 'PV', 'RMSt', 'RMSi', 'RMSa', 'PVr', 'PV%', 'PV%_I']
         irows = []
         for key, (lab, fn) in zip(keys, T['iso_rows']):
             v = iso.get(key)

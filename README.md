@@ -20,7 +20,7 @@ Herramienta Python para el análisis de superficies de espejos a partir de resul
 - Ficheros con **varios casos de carga** apilados (1ª columna = nº de caso)
 - Cálculo de **RMS**, **RMS respecto a la media** y **PV** sobre la apertura
 - **Calidad óptica**: error de frente de onda en reflexión (2·cosθ·superficie) con λ y ángulo de incidencia configurables, **Strehl** por Maréchal y numérico, y **PSF** por FFT en unidades de λ/D
-- **ISO 10110-5:2015**: potencia (A), irregularidad (B), irregularidad rotacionalmente invariante (C), RMSt, RMSi, RMSa y PV robusto (PVr), notación `3/A(B/C) RMSx < D` y comprobación frente a una tolerancia
+- **ISO 10110-5:2015**: potencia (A), irregularidad (B), irregularidad rotacionalmente invariante (C), RMSt, RMSi, RMSa, PV robusto (PVr) y PV recortado (PV99.8%), notación `3/A(B/C) RMSx < D` y comprobación frente a una tolerancia
 - **Combinación de casos de carga** calculados con la misma malla: gravedad a cualquier ángulo de elevación a partir de casos a ángulos distintos, u(θ) = cosθ·A + sinθ·B (+C), con comprobación de linealidad y barrido de RMS/PV; o combinación lineal Σ cₖ·uₖ
 - **Vista 3D interactiva** de la superficie de deformación con escala Z configurable
 - **Informe Word** (español o inglés) con los mapas de la superficie sin sólido rígido y del residuo, RMS, máximo, mínimo, PV, términos eliminados, calidad óptica, tabla ISO 10110-5 y observaciones automáticas
@@ -101,7 +101,7 @@ Con tres o más casos, `--constant` añade un término constante (precargas, mon
 - Las magnitudes son de **superficie** en nm (1 fringe spacing = λ/2).
 - Funciones de ISO 14999-4:2007: tilt = plano best-fit (incluye pistón); RMS = integral sobre la apertura (aquí ponderada por área nodal).
 - La esfera best-fit se aproxima paraxialmente por el término ρ² (se avisa si la superficie es rápida), la parte rotacionalmente invariante (óptimo rms = media azimutal) por un ajuste de polinomios pares en ρ, y el PVr según Evans (Opt. Eng. 48(4), 2009) con los 37 términos Zernike Fringe que recomienda ISO 14999-4. ISO 10110-5:2015 limita el PVr a aperturas circulares; en las demás se calcula y se marca como fuera de norma.
-- PV% (PV recortado) aún no implementado.
+- PVr acotado entre 6·RMS del residuo y el PV, y PV99.8% (PV recortado del 99,8 % del área, recorte óptimo de las dos colas) según Murphy (Proc. SPIE 12778, 2023), para f_WD y f_WI. La comprobación de tolerancias muestra también B y PV evaluados con PV99.8%, que la revisión de ISO 10110-5 en preparación prevé admitir por defecto.
 - La norma define la desviación de forma normal a la superficie; con «cambio de sag» los valores son desviación de sagita ΔZ. En espejos planos coinciden.
 - No se evalúan las formas cilíndricas/tóricas (AX;AY, CX;CY), las pendientes ΔS con longitud de muestreo, los campos de prueba «(all …)» ni las tolerancias de coeficientes Z(n,m).
 
