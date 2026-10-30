@@ -41,12 +41,29 @@ FLUJO DE TRABAJO
    normales nodales.
 4. Eliminar los modos de sólido rígido seleccionados (Tx Ty Tz Rx Ry Rz),
    ajuste por mínimos cuadrados ponderado por área.
-5. Desplazamiento normal residual  u_n = u · n̂.
-6. Ajuste polinómico WLS (ponderado por área) sobre la apertura:
-     circular     → Zernike circular, convención Fringe o Noll
-     rectangular  → Chebyshev 2D  T_i(x)·T_j(y)
-     anular       → (pendiente: Zernike anular de Mahajan)
-     hexagonal    → (pendiente: polinomios de segmento hexagonal)
+5. Error de superficie (--quantity):
+     sag    : cambio de sag Δz = (u·n̂)/n_z  (por defecto).  Incluye el efecto
+              del movimiento en el plano en superficies curvas, como
+              recomiendan Doyle, Genberg, Michels et al. (SPIE 5867, 2005).
+     normal : desplazamiento normal u·n̂ (MATLAB original, 'nd' de SurfCalc).
+   En espejos planos ambos coinciden.
+6. Ajuste polinómico WLS (ponderado por área proyectada) sobre la apertura:
+     circular     → Zernike, convención Fringe o Noll
+     anular       → Zernike anulares de Mahajan (1981)
+     hexagonal    → ortonormales hexagonales de Mahajan & Dai (2006)
+     rectangular  → ortonormales rectangulares de Mahajan & Dai (2007);
+                    el cuadrado es el caso ancho = alto
+7. Aporte de cada término al RMS, independiente del número de términos
+   (Gram–Schmidt ponderado sobre los nodos), y RMS/PV residual acumulado.
+8. Calidad óptica (--wavelength, --incidence, --units): WFE en reflexión
+   = 2·cosθ·superficie, Strehl de Maréchal y numérico (PSF por FFT).
+9. Magnitudes de forma ISO 10110-5:2015 (potencia A, irregularidad B,
+   irregularidad rotacionalmente invariante C, RMSt/RMSi/RMSa, PVr) y
+   comprobación opcional frente a una indicación «3/A(B/C) RMSx < D»
+   (--iso-spec).
+10. Combinación de casos de carga calculados con la misma malla:
+    gravedad a distintos ángulos u(θ) = cosθ·A + sinθ·B (+C) (--gravity,
+    --elevation, --sweep) o combinación lineal Σ cₖ·uₖ (--combine).
 
 
 CONVENCIONES DE ZERNIKE (apertura circular)
@@ -69,15 +86,16 @@ Normalización (--norm): 'pico' (valor máximo 1 en el borde) o 'rms'
 de los coeficientes; el residuo, su RMS y su PV NO dependen de ella.
 
 
-POLINOMIOS DE CHEBYSHEV (apertura rectangular)
-----------------------------------------------
-Producto tensorial de Chebyshev de primera especie T_i(x)·T_j(y), con x, y
-normalizados a [-1, 1] mediante la semianchura y semialtura de la apertura.
-Ordenación triangular por grado total k = i + j y, dentro de cada grado,
-de mayor a menor potencia en x:
-  C0 (0,0) pistón · C1 (1,0) tilt X · C2 (0,1) tilt Y ·
-  C3 (2,0) curvatura X · C4 (1,1) torsión · C5 (0,2) curvatura Y · ...
-Los lados del rectángulo deben ser paralelos a los ejes X e Y.
+POLINOMIOS PARA PUPILAS NO CIRCULARES
+-------------------------------------
+Ortonormalización de Gram–Schmidt de los Zernike de Noll sobre la pupila
+ideal inscrita en el círculo unidad (anillo de obscuración ε = r_in/R;
+hexágono regular; rectángulo con semilados a, b, a² + b² = 1).  Se calcula
+con cuadratura de Gauss exacta, por lo que no depende de la malla, y
+reproduce las expresiones cerradas publicadas (p. ej. A4 = √3(2ρ²−1−ε²)/(1−ε²),
+R4 = √5(3ρ²−1)/(2√(1−2a²+2a⁴)), H2 = 2√(6/5)·x).  Índices en orden de Noll
+(A1, H1, R1 = pistón; 2, 3 = tilts; 4 = desenfoque...).  Son siempre
+ortonormales: el coeficiente es directamente el RMS del término.
 
 
 Uso
@@ -92,9 +110,20 @@ python fem_mirror_analysis.py RESULTADOS.TXT --terms 0 1 2 3 4
 # Igual que SurfCalc "Noll Zernike, terms 1-5"
 python fem_mirror_analysis.py RESULTADOS.TXT --convention noll --terms 1 2 3 4 5
 
-# Espejo rectangular 120 x 80, Chebyshev hasta grado 2
+# Espejo rectangular 120 x 80, 6 términos de Mahajan–Dai
 python fem_mirror_analysis.py RESULTADOS.TXT --aperture rectangular \\
-    --width 120 --height 80 --terms 0 1 2 3 4 5 --plot
+    --width 120 --height 80 --nterms 6 --plot
+
+# Espejo anular (hueco detectado automáticamente), 11 términos
+python fem_mirror_analysis.py RESULTADOS.TXT --aperture annular --nterms 11
+
+# Strehl a 1 µm con 10° de incidencia y comprobación ISO 10110-5
+python fem_mirror_analysis.py RESULTADOS.TXT --nterms 4 --wavelength 1000 \\
+    --incidence 10 --iso-spec "3/500 nm (100 nm/50 nm) RMSi < 20 nm"
+
+# Gravedad a 60° de elevación a partir de casos a 0° y 45°, y barrido 0–90°
+python fem_mirror_analysis.py --gravity g0.TXT 0 --gravity g45.TXT 45 \\
+    --elevation 60 --sweep 0 90 15 --save-combined g60.TXT
 
 # Listar términos
 python fem_mirror_analysis.py --list-terms --convention noll
@@ -117,13 +146,17 @@ from scipy.spatial import Delaunay
 #  APERTURAS Y BASES DISPONIBLES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Aperturas implementadas y la base polinómica que usa cada una
+# Aperturas disponibles y la base polinómica que usa cada una
 APERTURE_BASIS = {
-    'circular':    'zernike',
-    'rectangular': 'chebyshev',
+    'circular':    'zernike',        # Zernike Fringe o Noll
+    'annular':     'annular',        # Zernike anular (Mahajan 1981)
+    'hexagonal':   'hexagonal',      # Mahajan & Dai (2006)
+    'rectangular': 'rectangular',    # Mahajan & Dai (2007); incluye el cuadrado
 }
-# Aperturas previstas pero todavía no implementadas (no seleccionables)
-APERTURES_PENDING = ('annular', 'hexagonal')
+APERTURES_PENDING = ()
+
+# Magnitud que se toma como error de superficie
+QUANTITIES = ('sag', 'normal')
 
 ZERNIKE_CONVENTIONS = ('fringe', 'noll')
 FRINGE_MAX_TERMS = 37      # el conjunto Fringe estándar termina en Z37 = (12, 0)
@@ -309,107 +342,168 @@ def build_zernike_matrix(terms, r, theta, norm='pico', convention='fringe'):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  POLINOMIOS DE CHEBYSHEV 2D (APERTURA RECTANGULAR)
+#  POLINOMIOS ORTONORMALES PARA PUPILAS NO CIRCULARES
+#  (Mahajan 1981: anular · Mahajan & Dai 2006/2007: hexagonal y rectangular)
 # ═══════════════════════════════════════════════════════════════════════════════
+#
+# Los polinomios de Mahajan y Mahajan & Dai se definen como la
+# ortonormalización de Gram–Schmidt de los polinomios de Zernike circulares
+# (ordenación y normalización de Noll) sobre la pupila no circular inscrita
+# en el círculo unidad, con peso uniforme.  Aquí se calculan numéricamente:
+# se integra con cuadratura de Gauss exacta para polinomios sobre la pupila
+# IDEAL (no sobre la malla FEM), de modo que la base no depende de la malla.
+#
+#   P_j(ρ,θ) = Σ_{i≤j} T_ij · Z_i(ρ,θ)        ⟨P_i, P_j⟩_pupila = δ_ij
+#
+# Cada P_j tiene RMS unidad sobre la pupila y es una combinación de Z_1..Z_j
+# (Z_j más correcciones de órdenes inferiores), por lo que conserva el
+# significado físico de Z_j (tilt, desenfoque, astigmatismo...).
 
-def chebyshev_index2ij(t):
+ORTHO_BASES = ('annular', 'hexagonal', 'rectangular')
+ORTHO_PREFIX = {'annular': 'A', 'hexagonal': 'H', 'rectangular': 'R'}
+ORTHO_MAX_TERMS = 66          # hasta orden radial n = 10
+
+_ORTHO_CACHE = {}
+
+
+def _gauss01(n):
+    """Nodos y pesos de Gauss–Legendre en [0, 1]."""
+    x, w = np.polynomial.legendre.leggauss(n)
+    return 0.5 * (x + 1.0), 0.5 * w
+
+
+def _hexagon_vertices(rotation_deg=0.0):
+    """Vértices del hexágono regular inscrito en el círculo unidad.
+    rotation_deg = 0 → vértices en ±X ; 30 → vértices en ±Y."""
+    a = np.radians(rotation_deg) + np.arange(6) * np.pi / 3.0
+    return np.column_stack([np.cos(a), np.sin(a)])
+
+
+def _pupil_quadrature(shape):
     """
-    Grados (i, j) del término t (0-based) en ordenación triangular estándar:
-    grado total k = i + j creciente; dentro de cada k, i decreciente.
-
-        C0 (0,0)  C1 (1,0)  C2 (0,1)  C3 (2,0)  C4 (1,1)  C5 (0,2)
-        C6 (3,0)  C7 (2,1)  C8 (1,2)  C9 (0,3)  ...
+    Cuadratura (x, y, w) sobre la pupila ideal inscrita en el círculo unidad.
+    Exacta para polinomios del grado que se usa (≤ 2·10).
     """
-    if t < 0:
-        raise ValueError(f"Índice de Chebyshev inválido: {t} (0-based, ≥ 0)")
-    k = 0
-    while t > (k + 1) * (k + 2) // 2 - 1:
-        k += 1
-    pos = t - k * (k + 1) // 2           # 0..k dentro del grado k
-    i = k - pos
-    return i, k - i
+    kind = shape['type']
+    ng = 48
+    if kind == 'annular':
+        eps = float(shape['eps'])
+        u, wu = _gauss01(ng)
+        r = eps + (1.0 - eps) * u
+        wr = (1.0 - eps) * wu * r                 # dA = r dr dθ
+        nt = 128
+        t = np.arange(nt) * 2 * np.pi / nt
+        R, Tt = np.meshgrid(r, t, indexing='ij')
+        W = np.outer(wr, np.full(nt, 2 * np.pi / nt))
+        return (R * np.cos(Tt)).ravel(), (R * np.sin(Tt)).ravel(), W.ravel()
+    if kind == 'rectangular':
+        a, b = float(shape['a']), float(shape['b'])
+        u, wu = _gauss01(ng)
+        x, y = (2 * u - 1) * a, (2 * u - 1) * b
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        W = np.outer(2 * a * wu, 2 * b * wu)
+        return X.ravel(), Y.ravel(), W.ravel()
+    if kind == 'hexagonal':
+        V = _hexagon_vertices(shape.get('rotation', 0.0))
+        u, wu = _gauss01(ng)
+        U, Vv = np.meshgrid(u, u, indexing='ij')
+        WU = np.outer(wu, wu)
+        xs, ys, ws = [], [], []
+        for k in range(6):
+            A, B = V[k], V[(k + 1) % 6]
+            # Triángulo (0, A, B) por transformación de Duffy desde [0,1]²
+            P = U[..., None] * (A + Vv[..., None] * (B - A))
+            jac = abs(A[0] * B[1] - A[1] * B[0]) * U
+            xs.append(P[..., 0].ravel()); ys.append(P[..., 1].ravel())
+            ws.append((WU * jac).ravel())
+        return np.concatenate(xs), np.concatenate(ys), np.concatenate(ws)
+    raise ValueError(f"Pupila desconocida: {kind}")
 
 
-_CHEB_NAMES = {
-    (0, 0): "Pistón",
-    (1, 0): "Tilt X",
-    (0, 1): "Tilt Y",
-    (2, 0): "Curvatura X (cilindro)",
-    (1, 1): "Torsión (twist)",
-    (0, 2): "Curvatura Y (cilindro)",
-    (3, 0): "Cúbico X",
-    (0, 3): "Cúbico Y",
-    (2, 1): "Coma-like Y (x²·y)",
-    (1, 2): "Coma-like X (x·y²)",
-    (4, 0): "Cuártico X",
-    (0, 4): "Cuártico Y",
-    (2, 2): "x²·y² (silla doble)",
-}
+def _shape_key(shape):
+    kind = shape['type']
+    if kind == 'annular':
+        return (kind, round(float(shape['eps']), 6))
+    if kind == 'rectangular':
+        return (kind, round(float(shape['a']), 6))
+    return (kind, round(float(shape.get('rotation', 0.0)), 6))
 
 
-def chebyshev_name(i, j):
-    return _CHEB_NAMES.get((int(i), int(j)), f"T{i}(x)·T{j}(y)")
-
-
-_CHEB_RMS_CACHE = {}
-
-
-def _chebyshev_rms_1d(n):
-    """RMS de T_n(x) sobre [-1, 1] con peso uniforme (cuadratura de Gauss)."""
-    if n not in _CHEB_RMS_CACHE:
-        xg, wg = np.polynomial.legendre.leggauss(max(32, n + 8))
-        c = np.zeros(n + 1)
-        c[n] = 1.0
-        Tn = np.polynomial.chebyshev.chebval(xg, c)
-        _CHEB_RMS_CACHE[n] = math.sqrt(float(np.sum(wg * Tn ** 2)) / 2.0)
-    return _CHEB_RMS_CACHE[n]
-
-
-def eval_chebyshev_term(i, j, x, y, norm='pico'):
+def ortho_transform(shape, nterms):
     """
-    T_i(x)·T_j(y) con x, y ∈ [-1, 1].
-    norm : 'pico' → máximo 1 ;  'rms' → RMS unidad sobre el rectángulo.
+    Matriz T (nterms × nterms, triangular superior) tal que
+    P = Z_noll_rms @ T es ortonormal sobre la pupila ideal (Gram–Schmidt
+    en orden de Noll, con diagonal positiva).
     """
-    ci = np.zeros(i + 1); ci[i] = 1.0
-    cj = np.zeros(j + 1); cj[j] = 1.0
-    val = (np.polynomial.chebyshev.chebval(x, ci)
-           * np.polynomial.chebyshev.chebval(y, cj))
-    if norm == 'rms':
-        val = val / (_chebyshev_rms_1d(i) * _chebyshev_rms_1d(j))
-    return val
+    key = (_shape_key(shape), int(nterms))
+    if key in _ORTHO_CACHE:
+        return _ORTHO_CACHE[key]
+    if shape['type'] == 'annular' and float(shape['eps']) <= 0.0:
+        T = np.eye(nterms)                       # sin obscuración = Zernike
+    else:
+        x, y, w = _pupil_quadrature(shape)
+        w = w / w.sum()
+        Z = build_zernike_matrix(list(range(1, nterms + 1)), np.hypot(x, y),
+                                 np.arctan2(y, x), 'rms', convention='noll')
+        Q, R = np.linalg.qr(Z * np.sqrt(w)[:, None])
+        s = np.sign(np.diag(R)); s[s == 0] = 1.0
+        R = R * s[:, None]                       # diagonal positiva (G–S)
+        if np.min(np.abs(np.diag(R))) < 1e-10:
+            raise ValueError("Base mal condicionada para esta pupila.")
+        T = np.linalg.solve(R, np.eye(nterms))   # R⁻¹ (triangular superior)
+    _ORTHO_CACHE[key] = T
+    return T
 
 
-def build_chebyshev_matrix(terms, x, y, norm='pico'):
-    """Matriz de diseño (N_puntos × N_terms) de Chebyshev 2D."""
-    A = np.zeros((len(x), len(terms)))
-    for col, t in enumerate(terms):
-        i, j = chebyshev_index2ij(t)
-        A[:, col] = eval_chebyshev_term(i, j, x, y, norm)
-    return A
+def build_ortho_matrix(shape, terms, r, theta):
+    """Matriz de diseño con los polinomios ortonormales de la pupila."""
+    J = max(terms)
+    T = ortho_transform(shape, J)
+    Z = build_zernike_matrix(list(range(1, J + 1)), r, theta, 'rms', convention='noll')
+    P = Z @ T
+    return P[:, [t - 1 for t in terms]]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  INTERFAZ COMÚN DE BASES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+BASIS_FAMILY_ES = {
+    'fringe': 'Zernike Fringe', 'noll': 'Zernike Noll',
+    'annular': 'Zernike anular (Mahajan)',
+    'hexagonal': 'hexagonales (Mahajan–Dai)',
+    'rectangular': 'rectangulares (Mahajan–Dai)',
+}
+
+
 def basis_key(aperture, convention='fringe'):
-    """Base a usar: 'fringe' | 'noll' | 'chebyshev'."""
-    if aperture in APERTURES_PENDING:
-        raise NotImplementedError(
-            f"La apertura '{aperture}' todavía no está implementada.")
-    fam = APERTURE_BASIS[aperture]
-    if fam == 'chebyshev':
-        return 'chebyshev'
+    """Base a usar: 'fringe' | 'noll' | 'annular' | 'hexagonal' | 'rectangular'."""
+    if aperture in ORTHO_BASES:
+        return aperture
+    if aperture != 'circular':
+        raise ValueError(f"Apertura desconocida: {aperture}")
     if convention not in ZERNIKE_CONVENTIONS:
         raise ValueError(f"Convención desconocida: {convention}")
     return convention
 
 
+def max_terms(basis):
+    return FRINGE_MAX_TERMS if basis == 'fringe' else ORTHO_MAX_TERMS
+
+
 def default_terms(basis, nterms):
-    """Los `nterms` primeros términos de la base, en sus índices nativos."""
-    if basis == 'noll':
-        return list(range(1, nterms + 1))
-    return list(range(nterms))
+    """Los `nterms` primeros términos de la base, en sus índices nativos
+    (Fringe 0-based; Noll y bases ortonormales 1-based, orden de Noll)."""
+    if basis == 'fringe':
+        return list(range(nterms))
+    return list(range(1, nterms + 1))
+
+
+def term_nm(basis, t):
+    """(n, m) del Zernike que genera el término t."""
+    if basis == 'fringe':
+        return zernike_index_to_nm(t, 'fringe')
+    return zernike_noll2nm(t)
 
 
 def term_info(basis, t):
@@ -417,30 +511,30 @@ def term_info(basis, t):
     Información de un término para imprimir.
 
     Devuelve (etiqueta, índice SurfCalc 1-based, orden, nombre).
+    En las bases ortonormales el nombre es el del Zernike del que procede.
     """
+    n, m = term_nm(basis, t)
     if basis == 'fringe':
-        n, m = zernike_index_to_nm(t, 'fringe')
         return f"Z{t}", t + 1, f"n={n} m={m:+d}", zernike_name(n, m)
     if basis == 'noll':
-        n, m = zernike_noll2nm(t)
         return f"Z{t}", t, f"n={n} m={m:+d}", zernike_name(n, m)
-    if basis == 'chebyshev':
-        i, j = chebyshev_index2ij(t)
-        return f"C{t}", t + 1, f"i={i} j={j}", chebyshev_name(i, j)
+    if basis in ORTHO_BASES:
+        return f"{ORTHO_PREFIX[basis]}{t}", t, f"n={n} m={m:+d}", zernike_name(n, m)
     raise ValueError(f"Base desconocida: {basis}")
 
 
 def build_design_matrix(basis, terms, coords, norm='pico'):
     """
     Matriz de diseño para cualquier base.
-      coords : dict con 'r' y 'theta' (Zernike) o 'x' e 'y' (Chebyshev),
-               todos normalizados a la apertura.
+      coords : dict con 'r' y 'theta' (normalizados al círculo unidad que
+               inscribe la pupila) y, para las bases ortonormales, 'shape'.
+    Las bases ortonormales tienen siempre normalización RMS (unidad).
     """
     if basis in ZERNIKE_CONVENTIONS:
         return build_zernike_matrix(terms, coords['r'], coords['theta'],
                                     norm, convention=basis)
-    if basis == 'chebyshev':
-        return build_chebyshev_matrix(terms, coords['x'], coords['y'], norm)
+    if basis in ORTHO_BASES:
+        return build_ortho_matrix(coords['shape'], terms, coords['r'], coords['theta'])
     raise ValueError(f"Base desconocida: {basis}")
 
 
@@ -501,7 +595,20 @@ def to_local_frame(coor, disp):
     return coor @ R.T, disp @ R.T, {'normal': normal, 'R': R, 'tilt_deg': tilt}
 
 
-def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
+def _local_spacing(xy, k=6):
+    """Separación local entre nodos: distancia media a los k vecinos más
+    próximos (robusta frente a pares de nodos muy cercanos)."""
+    from scipy.spatial import cKDTree
+    k = min(k, len(xy) - 1)
+    d = cKDTree(xy).query(xy, k=k + 1)[0][:, 1:]
+    d = np.where(d > 0, d, np.nan)
+    with np.errstate(all='ignore'):
+        loc = np.nanmean(d, axis=1)
+    loc[~np.isfinite(loc)] = np.inf
+    return loc
+
+
+def compute_nodal_areas_and_normals(coor, area_threshold=0.0, max_edge_factor=4.0):
     """
     Triangulación de Delaunay en XY.  Áreas nodales (área proyectada del
     triángulo / 3) y normales unitarias en cada nodo.
@@ -512,6 +619,11 @@ def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
         un triángulo.  ¡Ojo! es absoluta: MATLAB usaba 1 para un espejo de
         1,2 m en mm; en espejos pequeños un umbral de 1 descarta casi toda
         la malla.  Por defecto 0 (sólo se descartan triángulos de área nula).
+    max_edge_factor : se descartan los triángulos cuya arista más larga supera
+        este factor por la separación local entre nodos (distancia media a
+        los 6 vecinos más próximos, en el vértice más aislado).  Elimina los triángulos falsos
+        que Delaunay crea sobre huecos (pupila anular) o entrantes del
+        contorno, sin afectar a mallas graduales.  None/0 → desactivado.
 
     Devuelve
     --------
@@ -534,6 +646,15 @@ def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
     area2d = np.abs(v12[:, 0] * v13[:, 1] - v13[:, 0] * v12[:, 1])
 
     valid = area2d > max(area_threshold, 0.0)
+    if max_edge_factor:
+        d_nn = _local_spacing(coor[:, :2])
+        P = coor[simplices, :2]
+        edges = np.stack([np.linalg.norm(P[:, 1] - P[:, 0], axis=1),
+                          np.linalg.norm(P[:, 2] - P[:, 1], axis=1),
+                          np.linalg.norm(P[:, 0] - P[:, 2], axis=1)], axis=1)
+        local = d_nn[simplices].max(axis=1)
+        local[~np.isfinite(local)] = np.inf
+        valid &= edges.max(axis=1) <= max_edge_factor * local
     simplices = simplices[valid]
     area2d = area2d[valid]
 
@@ -568,10 +689,21 @@ def compute_nodal_areas_and_normals(coor, area_threshold=0.0):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def extract_rigid(coor, disp, rigidmodes=(0, 0, 1, 0, 0, 0),
-                  area_threshold=0.0):
+                  area_threshold=0.0, quantity='normal'):
     """
-    Elimina el movimiento de sólido rígido y devuelve el desplazamiento
-    normal residual.  Traducción de extract_rigid.m (IAC).
+    Elimina el movimiento de sólido rígido y devuelve el error de superficie
+    residual.  Traducción de extract_rigid.m (IAC), ampliada.
+
+    quantity : 'normal' → desplazamiento normal  u·n̂  (como el MATLAB y el
+                          'nd' de SurfCalc)
+               'sag'    → cambio de sag lineal medido a lo largo de Z en la
+                          misma posición (x, y):  Δs = u_z − ∇f·u_xy.
+                          Con n̂ = (−f_x, −f_y, 1)/√(1+|∇f|²) resulta
+                          Δs = (u·n̂) / n_z.  Es lo que recomiendan Doyle,
+                          Genberg, Michels et al. (SPIE 5867, 2005) para
+                          superficies curvas: incluye el efecto del
+                          movimiento en el plano.  En espejos planos
+                          (n_z = 1) coincide con la normal.
 
         rigidmodes = [Tx, Ty, Tz, Rx, Ry, Rz]   0 = conservar, 1 = eliminar
 
@@ -580,8 +712,8 @@ def extract_rigid(coor, disp, rigidmodes=(0, 0, 1, 0, 0, 0),
 
     Devuelve
     --------
-    un  : ndarray (N,)   Desplazamiento normal residual (NaN en nodos sin
-                         área, que no pertenecen a ningún triángulo)
+    un  : ndarray (N,)   Error de superficie residual (normal o sag; NaN en
+                         nodos sin área, fuera de la triangulación)
     an  : ndarray (N,)   Áreas nodales normalizadas
     pos : ndarray (6,)   Coeficientes [Tx, Ty, Tz, Rx, Ry, Rz]
     """
@@ -632,6 +764,12 @@ def extract_rigid(coor, disp, rigidmodes=(0, 0, 1, 0, 0, 0),
         disp_corr -= rigid
 
     un = (disp_corr * node_norms).sum(axis=1)
+    if quantity == 'sag':
+        nz = node_norms[:, 2]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            un = np.where(np.abs(nz) > 0.05, un / nz, np.nan)   # >87° → sin sentido
+    elif quantity != 'normal':
+        raise ValueError(f"Magnitud desconocida: {quantity}")
     un[an <= 0] = np.nan          # nodos fuera de la triangulación
     return un, an, pos
 
@@ -676,12 +814,28 @@ def aperture_circular(xy, radius=None, center=None):
     return mask, r[mask] / radius, np.arctan2(yc[mask], xc[mask])
 
 
+def aperture_annular(xy, radius=None, inner_radius=0.0, center=None):
+    """
+    Máscara anular  r_in ≤ r ≤ R.  Coordenadas normalizadas a R.
+    Devuelve mask, r_norm, theta.
+    """
+    cx, cy = _center(xy, center)
+    xc, yc = xy[:, 0] - cx, xy[:, 1] - cy
+    r = np.hypot(xc, yc)
+    if radius is None:
+        radius = r.max()
+    mask = (r <= radius * (1 + 1e-9)) & (r >= inner_radius * (1 - 1e-9))
+    return mask, r[mask] / radius, np.arctan2(yc[mask], xc[mask])
+
+
 def aperture_rectangular(xy, width=None, height=None, center=None):
     """
-    Máscara rectangular (lados paralelos a X e Y) y coordenadas normalizadas
-    a [-1, 1] para Chebyshev.
+    Máscara rectangular (lados paralelos a X e Y).  Para la base de
+    Mahajan–Dai el rectángulo se inscribe en el círculo unidad: las
+    coordenadas se normalizan por la semidiagonal.
 
-    Devuelve mask (N,), x_norm (M,), y_norm (M,)
+    Devuelve mask, r_norm, theta, a, b  (a, b = semilados normalizados,
+    a² + b² = 1)
     """
     cx, cy = _center(xy, center)
     xc, yc = xy[:, 0] - cx, xy[:, 1] - cy
@@ -692,80 +846,170 @@ def aperture_rectangular(xy, width=None, height=None, center=None):
     hw, hh = width / 2.0, height / 2.0
     tol = 1 + 1e-9
     mask = (np.abs(xc) <= hw * tol) & (np.abs(yc) <= hh * tol)
-    return mask, np.clip(xc[mask] / hw, -1, 1), np.clip(yc[mask] / hh, -1, 1)
+    hd = math.hypot(hw, hh)
+    return (mask, np.minimum(np.hypot(xc[mask], yc[mask]) / hd, 1.0),
+            np.arctan2(yc[mask], xc[mask]), hw / hd, hh / hd)
 
 
-def aperture_hexagonal(xy, circumradius=None, center=None):
+def aperture_hexagonal(xy, circumradius=None, center=None, rotation=0.0):
     """
-    Máscara hexagonal regular (vértice en +X).  PENDIENTE: la base de
-    polinomios de segmento hexagonal no está implementada, por lo que esta
-    apertura no es seleccionable todavía.
+    Máscara hexagonal regular inscrita en el círculo de radio `circumradius`.
+    rotation = 0 → vértices en ±X ; 30 → vértices en ±Y (lados verticales).
+    Devuelve mask, r_norm, theta (normalizados al circunradio).
     """
     cx, cy = _center(xy, center)
     xc, yc = xy[:, 0] - cx, xy[:, 1] - cy
     if circumradius is None:
         circumradius = np.hypot(xc, yc).max()
-    apothem = circumradius * math.sqrt(3) / 2.0
-    c1 = np.abs(yc) <= apothem
-    c2 = np.abs(xc * (math.sqrt(3) / 2) + yc * 0.5) <= apothem
-    c3 = np.abs(xc * (math.sqrt(3) / 2) - yc * 0.5) <= apothem
+    # Girar al sistema "vértice en +X" para aplicar el test
+    c, s = math.cos(math.radians(-rotation)), math.sin(math.radians(-rotation))
+    xr, yr = c * xc - s * yc, s * xc + c * yc
+    apothem = circumradius * math.sqrt(3) / 2.0 * (1 + 1e-9)
+    c1 = np.abs(yr) <= apothem
+    c2 = np.abs(xr * (math.sqrt(3) / 2) + yr * 0.5) <= apothem
+    c3 = np.abs(xr * (math.sqrt(3) / 2) - yr * 0.5) <= apothem
     mask = c1 & c2 & c3
-    return (mask, np.hypot(xc[mask], yc[mask]) / circumradius,
+    return (mask, np.minimum(np.hypot(xc[mask], yc[mask]) / circumradius, 1.0),
             np.arctan2(yc[mask], xc[mask]))
 
 
 def apply_aperture(xy, un, an, aperture, radius=None, width=None, height=None,
-                   center=None):
+                   center=None, inner_radius=None, hex_rotation=0.0):
     """
     Selecciona los nodos de la apertura y devuelve sus coordenadas
     normalizadas para la base correspondiente.
 
-    Se excluyen los nodos con un NaN (sin área en la triangulación).
+    aperture : 'circular' | 'annular' | 'hexagonal' | 'rectangular'
+    radius   : radio exterior (circular, anular) o circunradio (hexagonal)
+    inner_radius : radio interior del anillo (None → hueco central de la malla)
+    hex_rotation : 0 → vértices en ±X ; 30 → vértices en ±Y
+
+    Se excluyen los nodos con NaN (sin área en la triangulación).
     El centro por defecto es el centroide ponderado por área.
 
     Devuelve
     --------
     mask   : ndarray (N,) bool
-    coords : dict  ('r','theta') para Zernike o ('x','y') para Chebyshev
-    geom   : dict  geometría de la apertura (para dibujar el contorno)
+    coords : dict  'r', 'theta' (normalizados al círculo que inscribe la
+             pupila) y, en pupilas no circulares, 'shape'
+    geom   : dict  geometría de la apertura (contornos, área, informe)
     """
-    if aperture in APERTURES_PENDING:
-        raise NotImplementedError(
-            f"La apertura '{aperture}' todavía no está implementada.")
     valid = np.isfinite(un) & (an > 0)
     if center is None:
         center = surface_centroid(xy[valid], an[valid])
     cx, cy = center
+    rv = np.hypot(xy[valid, 0] - cx, xy[valid, 1] - cy)
 
     if aperture == 'circular':
         if radius is None:
-            radius = float(np.hypot(xy[valid, 0] - cx, xy[valid, 1] - cy).max())
+            radius = float(rv.max())
         mask, r, th = aperture_circular(xy, radius, center)
-        keep = valid[mask]
-        mask &= valid
-        coords = {'r': r[keep], 'theta': th[keep]}
+        coords = {'r': r, 'theta': th}
         geom = {'type': 'circular', 'center': center, 'radius': radius}
+    elif aperture == 'annular':
+        if radius is None:
+            radius = float(rv.max())
+        if inner_radius is None:
+            inner_radius = float(rv.min())
+            if inner_radius < 0.01 * radius:     # sin hueco apreciable
+                inner_radius = 0.0
+        eps = inner_radius / radius
+        if not 0.0 <= eps < 0.95:
+            raise ValueError(f"Obscuración ε = {eps:.3f} fuera de rango [0, 0.95).")
+        mask, r, th = aperture_annular(xy, radius, inner_radius, center)
+        coords = {'r': r, 'theta': th, 'shape': {'type': 'annular', 'eps': eps}}
+        geom = {'type': 'annular', 'center': center, 'radius': radius,
+                'inner_radius': inner_radius, 'eps': eps}
+    elif aperture == 'hexagonal':
+        if radius is None:
+            radius = float(rv.max())
+        mask, r, th = aperture_hexagonal(xy, radius, center, hex_rotation)
+        coords = {'r': r, 'theta': th,
+                  'shape': {'type': 'hexagonal', 'rotation': float(hex_rotation)}}
+        geom = {'type': 'hexagonal', 'center': center, 'radius': radius,
+                'rotation': float(hex_rotation)}
     elif aperture == 'rectangular':
         if width is None:
             width = 2.0 * float(np.abs(xy[valid, 0] - cx).max())
         if height is None:
             height = 2.0 * float(np.abs(xy[valid, 1] - cy).max())
-        mask, xn, yn = aperture_rectangular(xy, width, height, center)
-        keep = valid[mask]
-        mask &= valid
-        coords = {'x': xn[keep], 'y': yn[keep]}
+        mask, r, th, a, b = aperture_rectangular(xy, width, height, center)
+        coords = {'r': r, 'theta': th, 'shape': {'type': 'rectangular', 'a': a, 'b': b}}
         geom = {'type': 'rectangular', 'center': center,
                 'width': width, 'height': height}
     else:
         raise ValueError(f"Apertura desconocida: {aperture}")
+
+    keep = valid[mask]
+    mask &= valid
+    coords['r'] = coords['r'][keep]
+    coords['theta'] = coords['theta'][keep]
     return mask, coords, geom
+
+
+def aperture_outline(geom, n=181):
+    """Contorno(s) de la apertura en coordenadas del modelo: lista de (x, y)."""
+    cx, cy = geom['center']
+    t = np.linspace(0, 2 * np.pi, n)
+    if geom['type'] in ('circular', 'annular'):
+        out = [(cx + geom['radius'] * np.cos(t), cy + geom['radius'] * np.sin(t))]
+        if geom['type'] == 'annular' and geom.get('inner_radius', 0) > 0:
+            ri = geom['inner_radius']
+            out.append((cx + ri * np.cos(t), cy + ri * np.sin(t)))
+        return out
+    if geom['type'] == 'hexagonal':
+        V = _hexagon_vertices(geom.get('rotation', 0.0)) * geom['radius']
+        V = np.vstack([V, V[:1]])
+        return [(cx + V[:, 0], cy + V[:, 1])]
+    if geom['type'] == 'rectangular':
+        w, h = geom['width'] / 2, geom['height'] / 2
+        return [(cx + np.array([-w, w, w, -w, -w]), cy + np.array([-h, -h, h, h, -h]))]
+    return []
+
+
+def describe_geometry(geom):
+    """Texto breve con la geometría de la apertura."""
+    t = geom['type']
+    if t == 'circular':
+        return f"Radio de normalización: {geom['radius']:.6g}"
+    if t == 'annular':
+        return (f"Radio exterior {geom['radius']:.6g} · interior "
+                f"{geom['inner_radius']:.6g} · obscuración ε = {geom['eps']:.4f}")
+    if t == 'hexagonal':
+        return (f"Circunradio {geom['radius']:.6g} · vértices en "
+                f"{'±X' if abs(geom.get('rotation', 0)) < 1 else '±Y'}")
+    return f"Anchura × altura: {geom['width']:.6g} × {geom['height']:.6g}"
+
+
+def plot_triangulation(x, y, max_edge_factor=4.0):
+    """
+    Triangulación para dibujar (matplotlib) sin los triángulos falsos que
+    puentean huecos o entrantes (mismo criterio que las áreas nodales).
+    """
+    import matplotlib.tri as mtri
+    tri = mtri.Triangulation(x, y)
+    if max_edge_factor:
+        P = np.column_stack([x, y])
+        d_nn = _local_spacing(P)
+        T = tri.triangles
+        Q = P[T]
+        emax = np.max(np.stack([np.linalg.norm(Q[:, 1] - Q[:, 0], axis=1),
+                                np.linalg.norm(Q[:, 2] - Q[:, 1], axis=1),
+                                np.linalg.norm(Q[:, 0] - Q[:, 2], axis=1)], axis=1), axis=1)
+        tri.set_mask(emax > max_edge_factor * d_nn[T].max(axis=1))
+    return tri
 
 
 def aperture_area(geom):
     """Área teórica de la apertura."""
-    if geom['type'] == 'circular':
+    t = geom['type']
+    if t == 'circular':
         return math.pi * geom['radius'] ** 2
-    if geom['type'] == 'rectangular':
+    if t == 'annular':
+        return math.pi * (geom['radius'] ** 2 - geom.get('inner_radius', 0.0) ** 2)
+    if t == 'hexagonal':
+        return 1.5 * math.sqrt(3) * geom['radius'] ** 2
+    if t == 'rectangular':
         return geom['width'] * geom['height']
     return None
 
@@ -775,15 +1019,20 @@ def mesh_coverage(xy, an, geom):
     Fracción del área teórica de la apertura cubierta por la malla
     (casco convexo de los nodos válidos).  < ~0.8 indica modelo parcial.
     """
+    area_ap = aperture_area(geom)
+    if not area_ap:
+        return None
     from scipy.spatial import ConvexHull
     pts = xy[an > 0]
-    area_ap = aperture_area(geom)
-    if len(pts) < 3 or not area_ap:
+    if len(pts) < 3:
         return None
     try:
-        return ConvexHull(pts).volume / area_ap      # en 2D .volume = área
+        hull = ConvexHull(pts).volume                # en 2D .volume = área
     except Exception:
         return None
+    if geom['type'] == 'annular':                    # el casco cubre el hueco
+        hull -= math.pi * geom.get('inner_radius', 0.0) ** 2
+    return hull / area_ap
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -806,14 +1055,48 @@ def fit_weighted_ls(u, A, weights=None):
 
 def fit_surface(u, coords, basis, terms, norm='pico', weights=None):
     """
-    Ajuste de la base `basis` ('fringe' | 'noll' | 'chebyshev').
-    Por defecto debe pasarse weights = áreas nodales (WLS, como SurfCalc).
+    Ajuste de la base `basis` ('fringe' | 'noll' | 'annular' | 'hexagonal' |
+    'rectangular').  Por defecto debe pasarse weights = áreas nodales (WLS).
 
     Devuelve coeffs, residual, A
     """
     A = build_design_matrix(basis, terms, coords, norm)
     coeffs, residual = fit_weighted_ls(u, A, weights)
     return coeffs, residual, A
+
+
+def term_contributions(u, A, weights):
+    """
+    Aporte de cada término, independiente del número de términos ajustados.
+
+    En una malla FEM los polinomios no son exactamente ortogonales (Genberg,
+    Michels & Doyle, SPIE 4771, 2002): el coeficiente de un término cambia
+    según qué otros términos se ajusten.  Aquí se ortonormalizan las columnas
+    de A sobre los propios nodos (Gram–Schmidt ponderado por área, en el
+    orden de `terms`) y se proyectan los datos:
+
+        b_k  = ⟨u, Φ_k⟩_w      con  ⟨Φ_i, Φ_j⟩_w = δ_ij
+        RMS² residual tras k términos = RMS²(u) − Σ_{i≤k} b_i²
+
+    Devuelve
+    --------
+    contrib   : |b_k|, aporte de cada término al RMS (unidades de u)
+    rms_after : RMS residual tras quitar los términos 1..k
+    pv_after  : PV residual tras quitar los términos 1..k
+    """
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+    sw = np.sqrt(w)
+    Q, R = np.linalg.qr(A * sw[:, None])
+    s = np.sign(np.diag(R)); s[s == 0] = 1.0
+    Q = Q * s
+    b = Q.T @ (u * sw)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        Phi = np.where(sw[:, None] > 0, Q / sw[:, None], 0.0)
+    res = u[:, None] - np.cumsum(Phi * b, axis=1)
+    rms_after = np.sqrt(np.sum(w[:, None] * res ** 2, axis=0))
+    pv_after = res.max(axis=0) - res.min(axis=0)
+    return np.abs(b), rms_after, pv_after
 
 
 def zernike_fit_scatter(un, r_norm, theta, terms, norm='pico', weights=None,
@@ -859,6 +1142,512 @@ def peak_to_valley(values):
     v = np.asarray(values, dtype=float)
     v = v[np.isfinite(v)]
     return float(v.max() - v.min()) if v.size else float('nan')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CALIDAD ÓPTICA: FRENTE DE ONDA, STREHL Y PSF
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Error de frente de onda en reflexión: un desplazamiento de la superficie
+# a lo largo de su normal añade un camino óptico 2·d·cosθ (θ = ángulo de
+# incidencia respecto a la normal).  Con el cambio de sag a lo largo del eje
+# (incidencia normal) WFE = 2·Δz.
+#
+# Strehl por la aproximación de Maréchal:  S ≈ exp(−(2π σ_W / λ)²), fiable
+# para S ≳ 0.3 (σ_W ≲ λ/6); el criterio de "limitado por difracción" es
+# S ≥ 0.8 (σ_W ≲ λ/14).  Se compara con el Strehl numérico de la PSF
+# calculada por FFT de la pupila.
+
+UNIT_TO_NM = {'m': 1e9, 'mm': 1e6, 'µm': 1e3, 'um': 1e3, 'nm': 1.0}
+
+
+def unit_factor_nm(units):
+    """Factor de las unidades del fichero a nm (KeyError si no se conoce)."""
+    return UNIT_TO_NM[str(units).strip()]
+
+
+def wfe_factor(incidence_deg=0.0):
+    """Factor superficie → frente de onda en reflexión: 2·cos θ."""
+    return 2.0 * math.cos(math.radians(float(incidence_deg)))
+
+
+def marechal_strehl(rms_wfe_nm, wavelength_nm):
+    """Strehl de Maréchal  exp(−(2π σ/λ)²)."""
+    return math.exp(-(2.0 * math.pi * rms_wfe_nm / wavelength_nm) ** 2)
+
+
+def aperture_mask_points(xy, geom):
+    """Máscara de puntos arbitrarios dentro de la apertura `geom`."""
+    c = geom['center']
+    t = geom['type']
+    if t == 'circular':
+        return aperture_circular(xy, geom['radius'], c)[0]
+    if t == 'annular':
+        return aperture_annular(xy, geom['radius'], geom.get('inner_radius', 0.0), c)[0]
+    if t == 'hexagonal':
+        return aperture_hexagonal(xy, geom['radius'], c, geom.get('rotation', 0.0))[0]
+    if t == 'rectangular':
+        return aperture_rectangular(xy, geom['width'], geom['height'], c)[0]
+    raise ValueError(f"Apertura desconocida: {t}")
+
+
+def psf_from_surface(x, y, surf, geom, wavelength_nm, units='mm', incidence_deg=0.0,
+                     n_pupil=128, pad=8, crop=8):
+    """
+    PSF de la pupila con la fase producida por el error de superficie `surf`
+    (valores nodales en x, y; NaN fuera).  La superficie se interpola en una
+    malla regular sobre la apertura; fuera de la malla FEM la amplitud es 0.
+
+    Devuelve dict:
+      psf     : imagen (2·crop·pad)² normalizada al pico de la PSF perfecta
+      strehl  : Strehl numérico = pico PSF / pico PSF perfecta
+      extent  : [−crop, crop, −crop, crop] en unidades de λ/D
+      D       : tamaño de la pupila usado (unidades del fichero)
+      fill    : fracción de la pupila con datos
+    """
+    from matplotlib.tri import LinearTriInterpolator
+    ok = np.isfinite(surf)
+    tri = plot_triangulation(x[ok], y[ok])
+    interp = LinearTriInterpolator(tri, surf[ok])
+
+    xs, ys = [], []
+    for ox, oy in aperture_outline(geom):
+        xs.append(ox); ys.append(oy)
+    xs, ys = np.concatenate(xs), np.concatenate(ys)
+    cx, cy = 0.5 * (xs.min() + xs.max()), 0.5 * (ys.min() + ys.max())
+    L = max(xs.max() - xs.min(), ys.max() - ys.min())
+    g = (np.arange(n_pupil) + 0.5) / n_pupil - 0.5
+    GX, GY = np.meshgrid(cx + g * L, cy + g * L)
+    pts = np.column_stack([GX.ravel(), GY.ravel()])
+    inside = aperture_mask_points(pts, geom).reshape(GX.shape)
+    W = np.ma.filled(interp(GX, GY), np.nan)
+    A = (inside & np.isfinite(W)).astype(float)
+    fill = A.sum() / max(inside.sum(), 1)
+    W = np.where(A > 0, W, 0.0)
+    W = W - (W * A).sum() / max(A.sum(), 1)                  # quitar pistón
+    phase = 2 * np.pi * wfe_factor(incidence_deg) * W * unit_factor_nm(units) / wavelength_nm
+
+    N = n_pupil * pad
+    field = np.zeros((N, N), complex)
+    perfect = np.zeros((N, N), complex)
+    field[:n_pupil, :n_pupil] = A * np.exp(1j * phase)
+    perfect[:n_pupil, :n_pupil] = A
+    P = np.abs(np.fft.fftshift(np.fft.fft2(field))) ** 2
+    P0 = np.abs(np.fft.fftshift(np.fft.fft2(perfect))) ** 2
+    strehl = float(P.max() / P0.max())
+    c = N // 2
+    h = int(crop * pad)
+    img = P[c - h:c + h, c - h:c + h] / P0.max()
+    return {'psf': img, 'strehl': strehl, 'extent': [-crop, crop, -crop, crop],
+            'D': L, 'fill': fill}
+
+
+def optical_quality(surf_rms, wavelength_nm, units='mm', incidence_deg=0.0):
+    """σ de superficie → σ_W (nm y ondas) y Strehl de Maréchal."""
+    k = wfe_factor(incidence_deg) * unit_factor_nm(units)
+    w_nm = surf_rms * k
+    return {'wfe_rms_nm': w_nm, 'wfe_rms_waves': w_nm / wavelength_nm,
+            'strehl': marechal_strehl(w_nm, wavelength_nm)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PROCESO COMPLETO (SÓLIDO RÍGIDO + APERTURA + AJUSTE)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_pipeline(coor, disp, rigid=(1, 1, 1, 1, 1, 1), quantity='sag',
+                 aperture='circular', aperture_kw=None, basis='fringe', terms=None,
+                 norm='pico', wls=True):
+    """
+    Cadena completa sobre un campo de desplazamientos.  Todas las etapas son
+    lineales en `disp`, de modo que el resultado de una combinación de casos
+    es la combinación de los resultados.
+
+    Devuelve dict con un, an, mask, coords, geom, residual, coeffs.
+    """
+    un, an, pos = extract_rigid(coor, disp, rigid, quantity=quantity)
+    mask, coords, geom = apply_aperture(coor[:, :2], un, an, aperture, **(aperture_kw or {}))
+    out = {'un': un, 'an': an, 'pos': pos, 'mask': mask, 'coords': coords, 'geom': geom,
+           'residual': None, 'coeffs': None}
+    if terms:
+        w = an[mask] / an[mask].sum()
+        out['coeffs'], out['residual'], _ = fit_surface(
+            un[mask], coords, basis, terms, norm, w if wls else None)
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  COMBINACIÓN DE CASOS DE CARGA
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Por linealidad elástica, la respuesta a la gravedad con un ángulo θ en un
+# plano (p. ej. la elevación del telescopio) es
+#
+#     u(θ) = cos θ · A + sin θ · B  (+ C)
+#
+# donde A y B son las respuestas a 1 g en dos direcciones perpendiciales del
+# plano y C un término constante opcional (precargas, montaje, térmico) que
+# no cambia con θ.  A, B (y C) se obtienen por mínimos cuadrados a partir de
+# 2 casos (3 con C) calculados a ángulos distintos; con más casos que
+# incógnitas se comprueba la linealidad.  El convenio de ángulos es libre
+# siempre que sea el mismo para todos los casos y la gravedad gire en un
+# plano.
+
+def load_case_aligned(fname, case=None, ref_coor=None, tol_rel=1e-6):
+    """
+    Lee un caso y, si se da `ref_coor`, reordena sus nodos para que coincidan
+    con los de referencia.  Error si las mallas no coinciden.
+    """
+    _, coor, disp = load_fem_data(fname, case)
+    if ref_coor is None:
+        return coor, disp
+    if len(coor) != len(ref_coor):
+        raise ValueError(
+            f"{fname}: {len(coor)} nodos frente a {len(ref_coor)} del primer caso.  "
+            "Los casos deben calcularse con la misma malla.")
+    from scipy.spatial import cKDTree
+    span = float(np.ptp(ref_coor, axis=0).max()) or 1.0
+    d, idx = cKDTree(coor).query(ref_coor)
+    if d.max() > tol_rel * span or len(np.unique(idx)) != len(idx):
+        raise ValueError(
+            f"{fname}: las coordenadas de los nodos no coinciden con las del primer "
+            f"caso (desviación máx. {d.max():.3g}).  Los casos deben calcularse con "
+            "la misma malla.")
+    return ref_coor, disp[idx]
+
+
+def fit_gravity_basis(disps, angles_deg, constant=False):
+    """
+    Respuestas unitarias A, B (y C) a partir de casos a distintos ángulos.
+
+    Devuelve dict con 'A', 'B', 'C' (o None), 'misfit' (desajuste relativo de
+    cada caso, sólo informativo si hay más casos que incógnitas) y 'dof'.
+    """
+    th = np.radians(np.asarray(angles_deg, dtype=float))
+    cols = [np.cos(th), np.sin(th)] + ([np.ones_like(th)] if constant else [])
+    M = np.column_stack(cols)                       # (ncasos, nincógnitas)
+    n_unk = M.shape[1]
+    if len(th) < n_unk:
+        raise ValueError(f"Hacen falta al menos {n_unk} casos "
+                         f"({'con' if constant else 'sin'} término constante).")
+    if np.linalg.matrix_rank(M) < n_unk:
+        raise ValueError("Los ángulos no permiten separar las respuestas "
+                         "(¿ángulos repetidos o separados 180°?).")
+    D = np.stack([np.asarray(d, float).ravel() for d in disps])      # (ncasos, 3N)
+    X, *_ = np.linalg.lstsq(M, D, rcond=None)
+    pred = M @ X
+    shape = np.asarray(disps[0]).shape
+    misfit = [float(np.linalg.norm(pred[k] - D[k]) / (np.linalg.norm(D[k]) or 1.0))
+              for k in range(len(th))]
+    return {'A': X[0].reshape(shape), 'B': X[1].reshape(shape),
+            'C': X[2].reshape(shape) if constant else None,
+            'misfit': misfit, 'dof': len(th) - n_unk}
+
+
+def gravity_combination(gbasis, angle_deg, ref_angle_deg=None):
+    """Desplazamiento a un ángulo; con referencia, el cambio respecto a ella."""
+    t = math.radians(float(angle_deg))
+    u = math.cos(t) * gbasis['A'] + math.sin(t) * gbasis['B']
+    if gbasis.get('C') is not None:
+        u = u + gbasis['C']
+    if ref_angle_deg is not None:
+        r = math.radians(float(ref_angle_deg))
+        u = u - (math.cos(r) * gbasis['A'] + math.sin(r) * gbasis['B']
+                 + (gbasis['C'] if gbasis.get('C') is not None else 0.0))
+    return u
+
+
+def linear_combination(disps, coeffs):
+    """Σ c_k · u_k."""
+    return sum(float(c) * np.asarray(d, float) for c, d in zip(coeffs, disps))
+
+
+def save_fem_txt(fname, coor, disp, header=None):
+    """Escribe un fichero X Y Z dX dY dZ en el mismo formato que el APDL."""
+    with open(fname, 'w', encoding='utf-8') as fh:
+        if header:
+            for line in str(header).splitlines():
+                fh.write(f"# {line}\n")
+        for (x, y, z), (dx, dy, dz) in zip(coor, disp):
+            fh.write(f"{x:15.5f}{y:15.5f}{z:15.5f}{dx:16.8E}{dy:16.8E}{dz:16.8E}\n")
+
+
+def elevation_sweep(coor, gbasis, angles_deg, ref_angle_deg=None, **pipeline_kw):
+    """
+    RMS y PV (superficie sin sólido rígido y residuo del ajuste) frente al
+    ángulo.  Usa la linealidad: se procesan A, B y C una sola vez.
+    """
+    parts = {'A': gbasis['A'], 'B': gbasis['B']}
+    if gbasis.get('C') is not None:
+        parts['C'] = gbasis['C']
+    res = {k: run_pipeline(coor, v, **pipeline_kw) for k, v in parts.items()}
+    an = res['A']['an']
+    mask = res['A']['mask']
+    w_ap = an[mask] / an[mask].sum()
+    has_fit = res['A']['residual'] is not None
+
+    def combo(field, t):
+        c, s = math.cos(math.radians(t)), math.sin(math.radians(t))
+        v = c * res['A'][field] + s * res['B'][field]
+        if 'C' in res:
+            v = v + res['C'][field]
+        return v
+
+    rows = []
+    for t in angles_deg:
+        un = combo('un', t)
+        rv = combo('residual', t) if has_fit else None
+        if ref_angle_deg is not None:
+            un = un - combo('un', ref_angle_deg)
+            if has_fit:
+                rv = rv - combo('residual', ref_angle_deg)
+        rows.append({'angle': float(t),
+                     'rms': rms_area_weighted(un, an), 'pv': peak_to_valley(un),
+                     'rms_res': rms_area_weighted(rv, w_ap) if has_fit else None,
+                     'pv_res': peak_to_valley(rv) if has_fit else None})
+    return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TOLERANCIAS DE FORMA ISO 10110-5:2015
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Descomposición de la desviación de forma (Tabla B.2 de la norma, funciones
+# definidas en ISO 14999-4):
+#
+#   f_WD  = medida − tilt                    → PV(Q), RMSt
+#   f_WS  = parte de esfera best-fit de f_WD → A  (PV de la potencia)
+#   f_WI  = f_WD − f_WS (irregularidad)      → B  (PV), RMSi
+#   f_WRI = parte rotacionalmente invariante de f_WI → C (PV)
+#   f_WRV = f_WI − f_WRI (asimétrica)        → RMSa
+#   PVr   = PV robusto de f_WD (sólo apertura circular)
+#
+# Definiciones de ISO 14999-4:2007 (3.1–3.3):
+#   · rms(f) = [∫∫ f² dA / ∫∫ dA]^½ sobre la apertura (sin restar la media);
+#   · f_TLT  = plano que mejor aproxima (rms) la medida → incluye el pistón;
+#   · f_WS   = función de forma esférica que mejor aproxima f_WD;
+#   · f_WRI  = función asférica rotacionalmente invariante que mejor
+#              aproxima f_WI.
+# Implementación:
+#   · f_TLT y la esfera por WLS ponderado por área nodal (≈ la integral);
+#   · la esfera se aproxima por el término ρ² (más pistón y tilt), es decir
+#     paraxialmente; el error relativo en A es del orden de s²/4, con
+#     s = semiapertura / radio nominal (se avisa si supera el 1 %);
+#   · la mejor función rotacionalmente invariante en sentido rms es la media
+#     azimutal; se aproxima por polinomios pares en ρ (Legendre en 2ρ²−1
+#     hasta ρ^(2·n_radial)).  Los RMS son estables; el PV (C) depende algo
+#     de la resolución radial, como cualquier PV;
+#   · PVr según Evans (Opt. Eng. 48(4), 2009), PV del ajuste de Zernike +
+#     3·RMS del residuo, con los 37 términos Fringe (Z1–Z36 y Z(12,0)) que
+#     recomienda ISO 14999-4 según Schake & Ehret (Metrologia 63, 055007,
+#     2026).  ISO 10110-5:2015 lo limita a aperturas circulares; en las
+#     demás se calcula (Zernike sobre el círculo que circunscribe la
+#     apertura, como en Schake & Ehret) pero se marca como fuera de norma;
+#   · pendientes (informativas): gradiente de f_WI en los triángulos de la
+#     malla FEM, con el muestreo de la malla, no con la longitud de
+#     muestreo G/H de la norma.
+# Todas las magnitudes son de superficie (no de frente de onda).  Una
+# «fringe spacing» equivale a λ/2 de superficie.  ISO 10110-5 define la
+# desviación de forma normal a la superficie (3.1) y la desviación de
+# sagita ΔZ a lo largo de z (3.2); en espejos planos coinciden.
+
+ISO_KEYS = ('A', 'B', 'C', 'RMSt', 'RMSi', 'RMSa', 'PV', 'PVr')
+
+
+def _wfit(A, u, w):
+    sw = np.sqrt(w)
+    c, *_ = np.linalg.lstsq(A * sw[:, None], u * sw, rcond=None)
+    return c, A @ c
+
+
+def _wrms(v, w):
+    return math.sqrt(float(np.sum(w * v ** 2)))
+
+
+def iso10110_analysis(u, weights, coords, units='mm', xy=None, n_radial=12,
+                      circular=True, z=None):
+    """
+    Magnitudes ISO 10110-5 de la desviación de forma `u` (unidades del
+    fichero) sobre los nodos de la apertura.  Devuelve un dict con los
+    valores en nm (PV/RMS de cada función) y, si se da `xy`, las
+    pendientes de la irregularidad en µrad.
+    """
+    k = unit_factor_nm(units)
+    u = np.asarray(u, float) * k
+    w = np.asarray(weights, float)
+    w = w / w.sum()
+    r, th = np.asarray(coords['r'], float), np.asarray(coords['theta'], float)
+    x, y = r * np.cos(th), r * np.sin(th)
+    one = np.ones_like(r)
+
+    _, tilt = _wfit(np.column_stack([one, x, y]), u, w)
+    WD = u - tilt
+    c, fit_s = _wfit(np.column_stack([one, x, y, r ** 2]), WD, w)
+    WI = WD - fit_s
+    WS = WD - WI
+    t = 2 * r ** 2 - 1
+    P = np.polynomial.legendre.legvander(t, int(n_radial))
+    _, WRI = _wfit(P, WI, w)
+    WRV = WI - WRI
+
+    out = {
+        'PV': peak_to_valley(WD), 'RMSt': _wrms(WD, w),
+        'A': peak_to_valley(WS), 'power_coef': float(c[3]),
+        'B': peak_to_valley(WI), 'RMSi': _wrms(WI, w),
+        'C': peak_to_valley(WRI), 'RMS_RI': _wrms(WRI, w),
+        'PV_RV': peak_to_valley(WRV), 'RMSa': _wrms(WRV, w),
+        'PVr': None, 'slope_rms_urad': None, 'slope_max_urad': None,
+        'n_radial': int(n_radial),
+        'fields': {'WD': WD, 'WS': WS, 'WI': WI, 'WRI': WRI, 'WRV': WRV},
+    }
+    Z = build_zernike_matrix(list(range(37)), r, th, 'pico', 'fringe')
+    _, fz = _wfit(Z, WD, w)
+    out['PVr'] = peak_to_valley(fz) + 3.0 * _wrms(WD - fz, w)
+    out['PVr_in_scope'] = bool(circular)
+    out['sphere_s'] = None
+    if xy is not None and z is not None and len(z) >= 6:
+        # Radio nominal paraxial de la superficie: z ≈ a + b·x + c·y + k·r²
+        X, Y = xy[:, 0] - np.mean(xy[:, 0]), xy[:, 1] - np.mean(xy[:, 1])
+        cz, _ = _wfit(np.column_stack([np.ones_like(X), X, Y, X ** 2 + Y ** 2]),
+                      np.asarray(z, float), w)
+        semi = float(np.max(np.hypot(X, Y)))
+        out['sphere_s'] = abs(2.0 * cz[3]) * semi        # semiapertura / R
+    if xy is not None and len(WI) >= 3:
+        try:
+            tri = plot_triangulation(xy[:, 0], xy[:, 1])
+            T = tri.get_masked_triangles()
+            p = xy[T]
+            f = WI[T] / k                                   # unidades del fichero
+            d1, d2 = p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]
+            det = d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0]
+            ok = np.abs(det) > 0
+            g1, g2 = f[:, 1] - f[:, 0], f[:, 2] - f[:, 0]
+            gx = (g1 * d2[:, 1] - g2 * d1[:, 1])[ok] / det[ok]
+            gy = (g2 * d1[:, 0] - g1 * d2[:, 0])[ok] / det[ok]
+            s = np.hypot(gx, gy) * 1e6                     # µrad
+            a = 0.5 * np.abs(det[ok])
+            out['slope_rms_urad'] = math.sqrt(float(np.sum(a * s ** 2) / np.sum(a)))
+            out['slope_max_urad'] = float(s.max())
+        except Exception:
+            pass
+    return out
+
+
+def _iso_num(txt):
+    return float(txt.replace(',', '.'))
+
+
+def parse_iso10110(spec):
+    """
+    Interpreta una indicación ISO 10110-5 (formas básicas para superficies
+    de revolución):
+
+        3/A(B/C) RMSt < D; RMSi < D; RMSa < D; PV(Q); PVr(R); λ = E
+
+    A, B, C pueden ser '-' (sin tolerancia).  Unidades nm, µm o, sin unidad,
+    «fringe spacings» (requieren λ; 1 fringe = λ/2 de superficie).
+    Devuelve dict {clave: valor en nm} con las claves de ISO_KEYS presentes,
+    'wavelength' y 'warnings'.  ValueError si no se entiende.
+    """
+    import re
+    s = str(spec).strip()
+    for a, b in (('μ', 'µ'), ('—', '-'), ('–', '-'), ('−', '-'), ('＜', '<'),
+                 ('lambda', 'λ'), ('Lambda', 'λ')):
+        s = s.replace(a, b)
+    if not s.startswith('3/'):
+        raise ValueError("La indicación debe empezar por «3/».")
+    warn = []
+    num = r'(\d+(?:[.,]\d+)?)'
+    unit = r'\s*(nm|µm|um)?'
+
+    lam = None
+    m = re.search(r'λ\s*=\s*' + num + r'\s*(nm)?', s)
+    if m:
+        lam = _iso_num(m.group(1))
+        s = s[:m.start()] + s[m.end():]
+    if re.search(r'\(\s*all\b', s):
+        warn.append("Campo de prueba «(all …)» ignorado: se evalúa la apertura completa.")
+        s = re.sub(r'\(\s*all[^)]*\)', '', s)
+    if re.search(r'Z\s*\(', s):
+        warn.append("Tolerancias de coeficientes de Zernike Z(n,m) no evaluadas.")
+        s = re.sub(r'Z\s*\([^)]*\)\s*(\([^)]*\))?', '', s)
+    if re.search(r'ΔS|RMSΔS', s):
+        warn.append("Tolerancias de pendiente ΔS no evaluadas (dependen de G/H de ISO 14999-4).")
+        s = re.sub(r'(RMS)?ΔS[^()]*\([^)]*\)', '', s)
+
+    def to_nm(val, u):
+        v = _iso_num(val)
+        if u in ('µm', 'um'):
+            return v * 1e3
+        if u == 'nm':
+            return v
+        if lam is None:
+            raise ValueError(f"«{val}» no tiene unidades: se interpreta como fringe "
+                             "spacings y entonces hace falta «λ = … nm» en la indicación.")
+        return v * lam / 2.0
+
+    tol = {}
+    body = s[2:]
+    for key, rx in (('PVr', r'PVr\s*\(\s*' + num + unit + r'\s*\)'),
+                    ('PV', r'PV\s*\(\s*' + num + unit + r'\s*\)')):
+        m = re.search(rx, body)
+        if m:
+            tol[key] = to_nm(m.group(1), m.group(2))
+            body = body[:m.start()] + body[m.end():]
+    for m in re.finditer(r'RMS\s*([tiaTIA])\s*<\s*' + num + unit, body):
+        tol['RMS' + m.group(1).lower()] = to_nm(m.group(2), m.group(3))
+    body = re.sub(r'RMS\s*[tiaTIA]\s*<\s*' + num + unit, '', body)
+
+    aval = r'(?:-|' + num + unit + r')'
+    m = re.match(r'\s*(' + aval + r')?\s*(;\s*' + aval + r')?\s*(?:\(([^)]*)\))?', body)
+    cyl = bool(m and m.group(4))
+    if cyl:
+        warn.append("Indicación cilíndrica/tórica AX;AY (CX;CY) no soportada: "
+                    "sólo se evalúa la irregularidad B.")
+    if m:
+        a_txt = (m.group(1) or '').strip()
+        if a_txt and a_txt != '-' and not cyl:
+            ma = re.fullmatch(num + unit, a_txt)
+            tol['A'] = to_nm(ma.group(1), ma.group(2))
+        inner = m.group(7)
+        if inner is not None:
+            parts = inner.split('/')
+            for key, p in zip(('B', 'C'), parts):
+                p = p.strip()
+                if p in ('', '-') or (key == 'C' and cyl):
+                    continue
+                mm = re.fullmatch(num + unit, p)
+                if not mm:
+                    raise ValueError(f"No se entiende «{p}» en «({inner})».")
+                tol[key] = to_nm(mm.group(1), mm.group(2))
+        rest = body[m.end():].strip(' ;')
+        if rest:
+            warn.append(f"Texto no interpretado: «{rest}».")
+    if not any(k in tol for k in ISO_KEYS):
+        raise ValueError("No se ha encontrado ninguna tolerancia en la indicación.")
+    tol['wavelength'] = lam
+    tol['warnings'] = warn
+    return tol
+
+
+def iso10110_check(res, tol):
+    """Lista de (clave, medido_nm, tolerancia_nm, cumple) de lo especificado."""
+    rows = []
+    for key in ISO_KEYS:
+        if key in tol and res.get(key) is not None:
+            rows.append((key, res[key], tol[key], res[key] <= tol[key]))
+    return rows
+
+
+def format_iso10110(res, decimals=1, comma=True):
+    """Valores medidos en notación ISO 10110-5 (nm)."""
+    def f(v):
+        txt = f"{v:.{decimals}f}"
+        return txt.replace('.', ',') if comma else txt
+    s = (f"3/{f(res['A'])} nm ({f(res['B'])} nm/{f(res['C'])} nm) "
+         f"RMSt < {f(res['RMSt'])} nm; RMSi < {f(res['RMSi'])} nm; RMSa < {f(res['RMSa'])} nm")
+    if res.get('PVr') is not None and res.get('PVr_in_scope', True):
+        s += f"; PVr({f(res['PVr'])} nm)"
+    return s
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -939,7 +1728,9 @@ def print_term_table(basis, nterms=21):
     """Imprime la tabla de términos de la base."""
     titles = {'fringe': "Zernike Fringe (índices del script 0-based)",
               'noll': "Zernike Noll (índices 1-based)",
-              'chebyshev': "Chebyshev 2D rectangular (índices 0-based)"}
+              'annular': "Zernike anular de Mahajan (orden de Noll, 1-based)",
+              'hexagonal': "Hexagonales de Mahajan–Dai (orden de Noll, 1-based)",
+              'rectangular': "Rectangulares de Mahajan–Dai (orden de Noll, 1-based)"}
     print(f"\n  {titles[basis]}")
     print(f"  {'Término':>8}  {'SurfCalc #':>10}  {'Orden':>12}  Nombre")
     print(f"  {'-'*8:>8}  {'-'*10:>10}  {'-'*12:>12}  ------")
@@ -958,14 +1749,28 @@ def print_rigid_body_results(pos, rigidmodes):
             print(f"    {name} = {val:+.6g}")
 
 
-def format_fit_table(basis, terms, coeffs):
-    """Tabla de coeficientes como lista de líneas de texto."""
-    lines = [f"  {'Término':>8}  {'SurfCalc #':>10}  {'Orden':>12}  "
-             f"{'Coeficiente':>14}  Nombre",
-             f"  {'-'*8:>8}  {'-'*10:>10}  {'-'*12:>12}  {'-'*14:>14}  ------"]
-    for t, c in zip(terms, coeffs):
+def format_fit_table(basis, terms, coeffs, contrib=None):
+    """
+    Tabla de coeficientes como lista de líneas de texto.
+    contrib : (aporte, rms_after, pv_after) de term_contributions, opcional.
+    """
+    head = f"  {'Término':>8}  {'#':>3}  {'Orden':>11}  {'Coeficiente':>13}"
+    sep = f"  {'-'*8:>8}  {'-'*3:>3}  {'-'*11:>11}  {'-'*13:>13}"
+    if contrib is not None:
+        head += f"  {'Aporte RMS':>11}  {'RMS resid.':>11}  {'PV resid.':>11}"
+        sep += f"  {'-'*11:>11}  {'-'*11:>11}  {'-'*11:>11}"
+    lines = [head + "  Nombre", sep + "  ------"]
+    for k, (t, c) in enumerate(zip(terms, coeffs)):
         lab, sc, order, name = term_info(basis, t)
-        lines.append(f"  {lab:>8}  {sc:>10d}  {order:>12}  {c:>+14.6e}  {name}")
+        row = f"  {lab:>8}  {sc:>3d}  {order:>11}  {c:>+13.4e}"
+        if contrib is not None:
+            row += (f"  {contrib[0][k]:>11.4e}  {contrib[1][k]:>11.4e}"
+                    f"  {contrib[2][k]:>11.4e}")
+        lines.append(row + "  " + name)
+    lines.append("  # = índice SurfCalc (1-based).  Aporte RMS: contribución del término al"
+                 " RMS, independiente")
+    lines.append("  del número de términos (Gram–Schmidt sobre los nodos).  RMS/PV resid.:"
+                 " tras quitar hasta ese término.")
     return lines
 
 
@@ -982,10 +1787,10 @@ def plot_results(coor, un, mask, residual, aperture_name, output_file='fem_analy
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     ok = np.isfinite(un)
-    triang_full = mtri.Triangulation(x[ok], y[ok])
+    triang_full = plot_triangulation(x[ok], y[ok])
     cf1 = axes[0].tricontourf(triang_full, un[ok], levels=64, cmap=surface_cmap())
-    plt.colorbar(cf1, ax=axes[0], label='Desplazamiento normal')
-    axes[0].set_title('Desplazamiento normal\n(tras quitar sólido rígido)')
+    plt.colorbar(cf1, ax=axes[0], label='Error de superficie')
+    axes[0].set_title('Error de superficie\n(tras quitar sólido rígido)')
     axes[0].set_aspect('equal')
     axes[0].set_xlabel('X')
     axes[0].set_ylabel('Y')
@@ -994,7 +1799,7 @@ def plot_results(coor, un, mask, residual, aperture_name, output_file='fem_analy
     un_res_full[mask] = residual
     valid = np.isfinite(un_res_full)
     if valid.sum() > 3:
-        triang_ap = mtri.Triangulation(x[valid], y[valid])
+        triang_ap = plot_triangulation(x[valid], y[valid])
         cf2 = axes[1].tricontourf(triang_ap, un_res_full[valid], levels=64, cmap=surface_cmap())
         plt.colorbar(cf2, ax=axes[1], label='Residuo')
     axes[1].set_title(f'Residuo tras el ajuste\n(apertura {aperture_name})')
@@ -1011,6 +1816,186 @@ def plot_results(coor, un, mask, residual, aperture_name, output_file='fem_analy
 # ═══════════════════════════════════════════════════════════════════════════════
 #  FUNCIÓN PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def _split_case(spec):
+    """«ruta::caso» → (ruta, caso|None)."""
+    if '::' in spec:
+        path, case = spec.rsplit('::', 1)
+        return path, float(case)
+    return spec, None
+
+
+def _cli_combination(args):
+    """Construye coor/disp a partir de --gravity o --combine."""
+    items = args.gravity or args.combine
+    coor = None
+    disps, vals, desc = [], [], []
+    for spec, val in items:
+        path, case = _split_case(spec)
+        c, d = load_case_aligned(path, case, coor)
+        if coor is None:
+            coor = c
+        disps.append(d)
+        vals.append(float(val))
+    if args.combine:
+        disp = linear_combination(disps, vals)
+        desc.append("Combinación lineal: " + " + ".join(
+            f"{v:g}·[{s}]" for (s, _), v in zip(items, vals)))
+        return coor, disp, None, desc
+    gb = fit_gravity_basis(disps, vals, constant=args.constant)
+    desc.append(f"Gravedad: casos a {', '.join(f'{v:g}°' for v in vals)}"
+                f"{' + término constante' if args.constant else ''}")
+    if gb['dof'] > 0:
+        desc.append("Comprobación de linealidad (desajuste relativo por caso): " +
+                    ", ".join(f"{v:g}°: {m*100:.2f}%" for v, m in zip(vals, gb['misfit'])))
+    else:
+        desc.append("Sin casos redundantes: no se puede comprobar la linealidad.")
+    disp = None
+    if args.elevation is not None:
+        disp = gravity_combination(gb, args.elevation, args.ref_elevation)
+        desc.append(f"Ángulo analizado: {args.elevation:g}°" +
+                    (f" respecto a {args.ref_elevation:g}°" if args.ref_elevation is not None else ""))
+    return coor, disp, gb, desc
+
+
+def _cli_sweep(args, coor, gbasis, rigid, basis, terms, ap_kw):
+    if gbasis is None:
+        print("  ⚠  --sweep sólo se aplica con --gravity.")
+        return
+    a0, a1, da = args.sweep
+    if da <= 0:
+        raise SystemExit("--sweep: el paso debe ser positivo.")
+    angles = list(np.arange(a0, a1 + 0.5 * da, da))
+    rows = elevation_sweep(coor, gbasis, angles, args.ref_elevation,
+                           rigid=rigid, quantity=args.quantity, aperture=args.aperture,
+                           aperture_kw=ap_kw, basis=basis,
+                           terms=None if args.no_zernike else terms,
+                           norm=args.norm, wls=not args.no_wls)
+    print(f"\n  ── Barrido de ángulo (sin sólido rígido{'' if args.no_zernike else ' / residuo del ajuste'}) ──")
+    print(f"  {'Ángulo':>8} {'RMS':>12} {'PV':>12}" +
+          ("" if args.no_zernike else f" {'RMS res.':>12} {'PV res.':>12}"))
+    for r in rows:
+        line = f"  {r['angle']:8.2f} {r['rms']:12.5g} {r['pv']:12.5g}"
+        if r['rms_res'] is not None:
+            line += f" {r['rms_res']:12.5g} {r['pv_res']:12.5g}"
+        print(line)
+
+
+def optics_summary(un_ap, w, coords, geom, xy_ap, units='mm', wavelength_nm=632.8,
+                   incidence_deg=0.0, residual=None, iso_spec=None, x=None, y=None,
+                   psf_on='residual', z_ap=None):
+    """
+    Calidad óptica y magnitudes ISO 10110-5 de la superficie en la apertura.
+
+    un_ap, w, coords, xy_ap : valores, pesos (áreas), coordenadas normalizadas y
+                              XY de los nodos de la apertura
+    residual : residuo del ajuste en esos nodos (o None)
+    x, y     : XY de toda la malla (para la PSF); si faltan se usa xy_ap
+    psf_on   : 'residual' (si hay ajuste) o 'surface'
+    Devuelve dict con iso, wfe_surface, wfe_residual, psf, tol, check, lines.
+    """
+    w = np.asarray(w, float) / np.sum(w)
+    iso = iso10110_analysis(un_ap, w, coords, units, xy=xy_ap,
+                            circular=geom['type'] == 'circular', z=z_ap)
+    k = unit_factor_nm(units)
+    oq_s = optical_quality(iso['RMSt'] / k, wavelength_nm, units, incidence_deg)
+    oq_r = None
+    if residual is not None:
+        r0 = residual - float(np.sum(w * residual))
+        oq_r = optical_quality(rms_area_weighted(r0, w), wavelength_nm, units, incidence_deg)
+    use_res = residual is not None and psf_on == 'residual'
+    if x is None:
+        x, y = xy_ap[:, 0], xy_ap[:, 1]
+    field = residual if use_res else un_ap
+    psf = None
+    try:
+        if len(x) == len(field):
+            full = np.asarray(field, float)
+        else:
+            full = np.full(len(x), np.nan)
+            full[_ap_index(x, y, xy_ap)] = field
+        psf = psf_from_surface(x, y, full, geom, wavelength_nm, units, incidence_deg)
+        psf['on'] = 'residual' if use_res else 'surface'
+    except Exception as e:                                     # pragma: no cover
+        psf = {'error': str(e)}
+    tol, check = None, []
+    if iso_spec:
+        tol = parse_iso10110(iso_spec)
+        check = iso10110_check(iso, tol)
+
+    L = []
+    L.append(f"── Calidad óptica (λ = {wavelength_nm:g} nm, incidencia {incidence_deg:g}°, "
+             f"unidades {units}) ──")
+    L.append("Frente de onda en reflexión WFE = 2·cosθ·superficie; sin pistón ni tilt.")
+
+    def _ln(name, oq):
+        if oq['wfe_rms_waves'] > 0:
+            return (f"{name:<26} σ_W = {oq['wfe_rms_nm']:9.3f} nm = λ/{1/oq['wfe_rms_waves']:<7.1f}"
+                    f" Strehl Maréchal = {oq['strehl']:.4f}")
+        return f"{name:<26} σ_W = 0"
+    L.append(_ln("Superficie sin s. rígido", oq_s))
+    if oq_r is not None:
+        L.append(_ln("Residuo del ajuste", oq_r))
+    if psf and 'strehl' in psf:
+        L.append(f"Strehl numérico (PSF por FFT, "
+                 f"{'residuo' if psf['on'] == 'residual' else 'superficie'}): {psf['strehl']:.4f}"
+                 f"   pupila con datos {psf['fill']*100:.1f}%")
+    smin = min(oq_s['strehl'], oq_r['strehl'] if oq_r else 1.0)
+    if smin < 0.3:
+        L.append("⚠ Strehl < 0.3: la aproximación de Maréchal no es fiable; usar el valor FFT.")
+    fr = wavelength_nm / 2.0
+    L.append("")
+    L.append(f"── ISO 10110-5 (superficie, nm; 1 fringe = λ/2 = {fr:g} nm) ──")
+    rows = [("A  potencia  PV(f_WS)", iso['A']), ("B  irregularidad  PV(f_WI)", iso['B']),
+            ("C  irreg. rot. inv.  PV(f_WRI)", iso['C']), ("PV total  PV(f_WD)", iso['PV']),
+            ("RMSt  rms(f_WD)", iso['RMSt']), ("RMSi  rms(f_WI)", iso['RMSi']),
+            ("RMSa  rms(f_WRV)", iso['RMSa'])]
+    if iso['PVr'] is not None:
+        rows.append(("PVr  PV robusto" + ("" if iso['PVr_in_scope'] else " *"), iso['PVr']))
+    for name, v in rows:
+        L.append(f"{name:<32} {v:11.3f} nm  {v/fr:9.4f} fr")
+    if iso['PVr'] is not None and not iso['PVr_in_scope']:
+        L.append("* PVr fuera de ISO 10110-5:2015 (sólo apertura circular); Zernike sobre el "
+                 "círculo que circunscribe la apertura.")
+    if iso.get('sphere_s') and iso['sphere_s'] ** 2 / 4 > 0.01:
+        L.append(f"⚠ Superficie rápida (semiapertura/R ≈ {iso['sphere_s']:.2f}): la esfera "
+                 f"best-fit paraxial puede desviar A del orden de {100*iso['sphere_s']**2/4:.0f} %.")
+    if iso['slope_rms_urad'] is not None:
+        L.append(f"Pendiente de f_WI (muestreo malla FEM): RMS {iso['slope_rms_urad']:.3f} µrad, "
+                 f"máx {iso['slope_max_urad']:.3f} µrad")
+    L.append(f"Notación: {format_iso10110(iso)}")
+    if tol is not None:
+        L.append(f"Comprobación frente a: {iso_spec}")
+        for wmsg in tol['warnings']:
+            L.append(f"⚠ {wmsg}")
+        for key, meas, lim, ok in check:
+            L.append(f"  {key:<5} medido {meas:10.3f} nm   tolerancia {lim:10.3f} nm   "
+                     f"{'CUMPLE' if ok else 'NO CUMPLE'}")
+    return {'iso': {k_: v for k_, v in iso.items() if k_ != 'fields'}, 'iso_fields': iso['fields'],
+            'wfe_surface': oq_s, 'wfe_residual': oq_r, 'psf': psf,
+            'tol': tol, 'check': check, 'lines': L, 'units': units,
+            'wavelength': wavelength_nm, 'incidence': incidence_deg, 'spec': iso_spec}
+
+
+def _ap_index(x, y, xy_ap):
+    from scipy.spatial import cKDTree
+    return cKDTree(np.column_stack([x, y])).query(xy_ap)[1]
+
+
+def _cli_optics(args, coor, un, an, mask, coords, geom, residual):
+    try:
+        out = optics_summary(un[mask], an[mask], coords, geom, coor[mask, :2], args.units,
+                             args.wavelength, args.incidence, residual, args.iso_spec,
+                             x=coor[:, 0], y=coor[:, 1], z_ap=coor[mask, 2])
+    except (KeyError, ValueError) as e:
+        print(f"\n  ⚠  Calidad óptica / ISO 10110-5: {e}")
+        return
+    print()
+    print("\n".join("  " + ln if ln else "" for ln in out['lines']))
+    if args.quantity == 'sag':
+        print("  (Con --quantity sag los valores ISO son desviación de sagita ΔZ; ISO 10110-5 "
+              "define la desviación de forma normal a la superficie.  En espejos planos coinciden.)")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1045,15 +2030,28 @@ def main():
         help="Centro de la apertura.  Default: centroide de área de la malla "
              "(para modelos parciales/simetría hay que darlo, p. ej. 0 0).")
     parser.add_argument(
-        "--aperture", choices=list(APERTURE_BASIS) + list(APERTURES_PENDING),
-        default="circular",
-        help="Forma de la apertura: circular (Zernike) o rectangular (Chebyshev). "
-             "'annular' y 'hexagonal' están pendientes de implementar.")
+        "--quantity", choices=QUANTITIES, default="sag",
+        help="Error de superficie: 'sag' (cambio de sag Δz, incluye el efecto "
+             "del movimiento en el plano; recomendado) o 'normal' (u·n̂, como el "
+             "MATLAB original y el 'nd' de SurfCalc).  En espejos planos coinciden. "
+             "Default: sag")
+    parser.add_argument(
+        "--aperture", choices=list(APERTURE_BASIS), default="circular",
+        help="Forma de la apertura y base: circular (Zernike Fringe/Noll), "
+             "annular (Zernike anular de Mahajan), hexagonal (Mahajan–Dai), "
+             "rectangular (Mahajan–Dai; un cuadrado es un rectángulo con "
+             "ancho = alto).  Default: circular")
     parser.add_argument(
         "--convention", choices=ZERNIKE_CONVENTIONS, default="fringe",
         help="Convención de Zernike para la apertura circular.  Default: fringe")
     parser.add_argument("--radius", type=float, default=None,
-                        help="Radio de normalización (circular).  Default: auto")
+                        help="Radio exterior (circular, anular) o circunradio "
+                             "(hexagonal).  Default: auto")
+    parser.add_argument("--inner-radius", type=float, default=None,
+                        help="Radio interior de la apertura anular.  Default: "
+                             "hueco central de la malla")
+    parser.add_argument("--hex-orientation", choices=["x", "y"], default="x",
+                        help="Hexágono con vértices en ±X o en ±Y.  Default: x")
     parser.add_argument("--width", type=float, default=None,
                         help="Anchura X (rectangular).  Default: auto")
     parser.add_argument("--height", type=float, default=None,
@@ -1061,14 +2059,17 @@ def main():
     parser.add_argument(
         "--terms", nargs="+", type=int, default=None,
         help="Índices de los términos a ajustar en la convención de la base "
-             "(Fringe y Chebyshev 0-based, Noll 1-based).  Default: pistón, "
-             "tilts y desenfoque/curvaturas.  Ver --list-terms")
+             "(Fringe 0-based; Noll y bases anular/hexagonal/rectangular "
+             "1-based en orden de Noll).  Default: pistón, tilts y "
+             "desenfoque.  Ver --list-terms")
     parser.add_argument(
         "--nterms", type=int, default=None,
         help="Ajustar los N primeros términos de la base (igual que la GUI). "
              "Alternativa a --terms.")
     parser.add_argument("--norm", choices=["pico", "rms"], default="pico",
-                        help="Normalización de los polinomios.  Default: pico")
+                        help="Normalización de los Zernike circulares.  Las bases "
+                             "anular, hexagonal y rectangular son siempre "
+                             "ortonormales (RMS).  Default: pico")
     parser.add_argument(
         "--no-wls", action="store_true",
         help="Ajuste por LS ordinario en vez de WLS ponderado por área "
@@ -1081,18 +2082,54 @@ def main():
                         help="Fichero de imagen.  Default: fem_analysis.png")
     parser.add_argument("--list-terms", action="store_true",
                         help="Mostrar la tabla de términos de la base y salir")
+    g = parser.add_argument_group("Calidad óptica e ISO 10110-5")
+    g.add_argument("--units", choices=["mm", "m", "µm", "um", "nm"], default="mm",
+                   help="Unidades de longitud del fichero.  Default: mm")
+    g.add_argument("--wavelength", type=float, default=632.8,
+                   help="Longitud de onda [nm] para Strehl y fringe spacings.  Default: 632.8")
+    g.add_argument("--incidence", type=float, default=0.0,
+                   help="Ángulo de incidencia [°] respecto a la normal; WFE = 2·cosθ·superficie. "
+                        "Default: 0")
+    g.add_argument("--iso-spec", default=None,
+                   help="Tolerancia ISO 10110-5 a comprobar, p. ej. "
+                        "\"3/900 nm (250 nm/100 nm) RMSi < 30 nm\"")
+    g.add_argument("--no-optics", action="store_true",
+                   help="Omitir Strehl, PSF y magnitudes ISO 10110-5")
+    c = parser.add_argument_group(
+        "Combinación de casos (en lugar de FNAME)",
+        "FICHERO admite «ruta::caso» para ficheros con varios casos apilados.")
+    c.add_argument("--gravity", nargs=2, action="append", metavar=("FICHERO", "ANGULO"),
+                   help="Caso de gravedad calculado al ángulo dado [°] (repetir: ≥2 casos, "
+                        "≥3 con --constant).  u(θ) = cosθ·A + sinθ·B (+C)")
+    c.add_argument("--constant", action="store_true",
+                   help="Incluir término constante C (precargas, montaje)")
+    c.add_argument("--elevation", type=float, default=None,
+                   help="Ángulo al que se analiza la combinación de gravedad")
+    c.add_argument("--ref-elevation", type=float, default=None,
+                   help="Ángulo de referencia: se analiza u(θ) − u(θ_ref)")
+    c.add_argument("--sweep", nargs=3, type=float, default=None,
+                   metavar=("INI", "FIN", "PASO"),
+                   help="Barrido de RMS/PV frente al ángulo")
+    c.add_argument("--combine", nargs=2, action="append", metavar=("FICHERO", "COEF"),
+                   help="Combinación lineal Σ cₖ·uₖ (repetir)")
+    c.add_argument("--save-combined", default=None,
+                   help="Guardar los desplazamientos combinados en un TXT")
 
     args = parser.parse_args()
 
-    if args.aperture in APERTURES_PENDING:
-        parser.error(f"La apertura '{args.aperture}' todavía no está implementada "
-                     f"(disponibles: {', '.join(APERTURE_BASIS)}).")
     basis = basis_key(args.aperture, args.convention)
+    if basis in ORTHO_BASES:
+        args.norm = 'rms'
 
     if args.list_terms:
         print_term_table(basis)
         sys.exit(0)
-    if args.fname is None:
+    combining = bool(args.gravity or args.combine)
+    if args.gravity and args.combine:
+        parser.error("Usa --gravity o --combine, no ambos.")
+    if args.gravity and args.elevation is None and args.sweep is None:
+        parser.error("Con --gravity indica --elevation y/o --sweep.")
+    if args.fname is None and not combining:
         parser.error("Se requiere el nombre del fichero de datos FEM.")
 
     if args.nterms is not None and args.terms is not None:
@@ -1104,22 +2141,35 @@ def main():
         else:
             args.terms = default_terms(basis, args.nterms)
     if args.terms is None:
-        args.terms = default_terms(basis, 6 if basis == 'chebyshev' else 4)
+        args.terms = default_terms(basis, 4)
     terms = sorted(set(args.terms))
     try:
         for t in terms:
             term_info(basis, t)
+        if basis in ORTHO_BASES and max(terms) > ORTHO_MAX_TERMS:
+            raise ValueError(f"Máximo {ORTHO_MAX_TERMS} términos en esta base.")
     except ValueError as e:
         parser.error(str(e))
 
     # ── Carga ────────────────────────────────────────────────────────────────
     print(f"\n{'═'*60}\n  fem_mirror_analysis.py\n{'═'*60}")
-    print(f"\n  Leyendo: {args.fname}")
-    try:
-        _, coor, disp = load_fem_data(args.fname, args.case)
-    except ValueError as e:
-        parser.error(str(e))
-    if args.case is not None:
+    gbasis = None
+    if combining:
+        try:
+            coor, disp, gbasis, desc = _cli_combination(args)
+        except ValueError as e:
+            parser.error(str(e))
+        print("\n".join("  " + d for d in desc))
+        if args.save_combined and disp is not None:
+            save_fem_txt(args.save_combined, coor, disp, "\n".join(desc))
+            print(f"  Desplazamientos combinados guardados en: {args.save_combined}")
+    else:
+        print(f"\n  Leyendo: {args.fname}")
+        try:
+            _, coor, disp = load_fem_data(args.fname, args.case)
+        except ValueError as e:
+            parser.error(str(e))
+    if args.case is not None and not combining:
         print(f"  Caso de carga: {args.case:g}")
     print(f"  Nodos leídos: {len(coor)}")
     for k, ax in enumerate("XYZ"):
@@ -1135,7 +2185,12 @@ def main():
     print(f"\n  Normal del plano best-fit: ({nbf[0]:+.5f}, {nbf[1]:+.5f}, "
           f"{nbf[2]:+.5f})  → {tilt:.4f}° respecto a Z")
     if args.frame == 'bestfit':
-        coor, disp, _ = to_local_frame(coor, disp)
+        coor0 = coor
+        coor, disp, finfo = to_local_frame(coor, disp if disp is not None else np.zeros_like(coor))
+        if gbasis is not None:
+            Rm = finfo['R']
+            gbasis = {k: (v @ Rm.T if isinstance(v, np.ndarray) and v.ndim == 2 else v)
+                      for k, v in gbasis.items()}
         print("  Sistema: plano best-fit (coordenadas y desplazamientos girados; "
               "Tx..Rz en ese sistema).")
     else:
@@ -1144,17 +2199,29 @@ def main():
             print("  ⚠  La superficie está inclinada respecto a Z.  Si es plana o "
                   "Z no es el eje óptico, usa --frame bestfit.")
 
-    # ── Sólido rígido ────────────────────────────────────────────────────────
     rigid_flags = tuple(args.rigid)
+    ap_kw = dict(radius=args.radius, width=args.width, height=args.height,
+                 center=tuple(args.center) if args.center else None,
+                 inner_radius=args.inner_radius,
+                 hex_rotation=0.0 if args.hex_orientation == 'x' else 30.0)
+    if args.sweep is not None:
+        _cli_sweep(args, coor, gbasis, rigid_flags, basis, terms, ap_kw)
+        if args.elevation is None:
+            print(f"\n{'═'*60}\n")
+            return
+
+    # ── Sólido rígido ────────────────────────────────────────────────────────
     active_names = [n for n, f in zip(['Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz'], rigid_flags) if f]
     print(f"\n  Eliminando sólido rígido: {active_names if active_names else 'ninguno'}")
-    un, an, pos = extract_rigid(coor, disp, rigid_flags, args.area_threshold)
+    un, an, pos = extract_rigid(coor, disp, rigid_flags, args.area_threshold,
+                                quantity=args.quantity)
     nbad = int(np.sum(~np.isfinite(un)))
     if nbad:
         print(f"  ⚠  {nbad} nodos sin área en la triangulación (excluidos).")
     print_rigid_body_results(pos, rigid_flags)
 
-    print(f"\n  ── Desplazamiento normal (toda la superficie) ──")
+    qname = ("cambio de sag Δz" if args.quantity == 'sag' else "desplazamiento normal u·n̂")
+    print(f"\n  ── Error de superficie: {qname} (toda la superficie) ──")
     print(f"  RMS (pond. por área):        {rms_area_weighted(un, an):.6g}")
     print(f"  RMS resp. media (std):       {std_area_weighted(un, an):.6g}")
     print(f"  Pico a valle (P-V):          {peak_to_valley(un):.6g}")
@@ -1162,19 +2229,18 @@ def main():
     # ── Ajuste polinómico ────────────────────────────────────────────────────
     mask = np.zeros(len(coor), dtype=bool)
     residual = np.array([])
+    geom = coords = None
+    if not (args.no_zernike and args.no_optics):
+        try:
+            mask, coords, geom = apply_aperture(coor[:, :2], un, an, args.aperture, **ap_kw)
+        except ValueError as e:
+            parser.error(str(e))
     if not args.no_zernike:
-        fam = "Chebyshev 2D" if basis == 'chebyshev' else f"Zernike {basis.capitalize()}"
+        fam = BASIS_FAMILY_ES[basis]
         print(f"\n  ── Ajuste {fam} — apertura {args.aperture} ──")
-        mask, coords, geom = apply_aperture(
-            coor[:, :2], un, an, args.aperture,
-            radius=args.radius, width=args.width, height=args.height,
-            center=tuple(args.center) if args.center else None)
         print(f"  Centro de la apertura ({'usuario' if args.center else 'centroide de área'}): "
               f"({geom['center'][0]:.4g}, {geom['center'][1]:.4g})")
-        if geom['type'] == 'circular':
-            print(f"  Radio de normalización: {geom['radius']:.6g}")
-        else:
-            print(f"  Anchura × altura: {geom['width']:.6g} × {geom['height']:.6g}")
+        print("  " + describe_geometry(geom))
         print(f"  Nodos en apertura: {mask.sum()} / {len(mask)}")
         cov = mesh_coverage(coor[:, :2], an, geom)
         if cov is not None and cov < 0.82:
@@ -1190,7 +2256,9 @@ def main():
             weights=None if args.no_wls else an_ap)
         print(f"  Método: {'LS ordinario (--no-wls)' if args.no_wls else 'WLS ponderado por área'}"
               f" · normalización '{args.norm}'\n")
-        print("\n".join(format_fit_table(basis, terms, coeffs)))
+        contrib = term_contributions(un_ap, build_design_matrix(basis, terms, coords, args.norm),
+                                     an_ap)
+        print("\n".join(format_fit_table(basis, terms, coeffs, contrib)))
 
         rb, ra = rms_area_weighted(un_ap, an_ap), rms_area_weighted(residual, an_ap)
         print(f"\n  Dentro de la apertura — ANTES del ajuste:")
@@ -1202,6 +2270,10 @@ def main():
         if rb > 0:
             print(f"    Reducción de RMS: {(1.0 - ra / rb) * 100.0:.1f}%")
 
+    if not args.no_optics and mask.any():
+        _cli_optics(args, coor, un, an, mask, coords, geom,
+                    residual if (not args.no_zernike and residual.size) else None)
+
     print(f"\n{'═'*60}\n")
 
     if args.plot:
@@ -1212,10 +2284,10 @@ def main():
             import matplotlib.tri as mtri
             ok = np.isfinite(un)
             fig, ax = plt.subplots(figsize=(8, 7))
-            cf = ax.tricontourf(mtri.Triangulation(coor[ok, 0], coor[ok, 1]),
+            cf = ax.tricontourf(plot_triangulation(coor[ok, 0], coor[ok, 1]),
                                 un[ok], levels=64, cmap=surface_cmap())
-            plt.colorbar(cf, ax=ax, label='Desplazamiento normal')
-            ax.set_title('Desplazamiento normal (tras quitar sólido rígido)')
+            plt.colorbar(cf, ax=ax, label='Error de superficie')
+            ax.set_title('Error de superficie (tras quitar sólido rígido)')
             ax.set_aspect('equal')
             ax.set_xlabel('X'); ax.set_ylabel('Y')
             plt.tight_layout()

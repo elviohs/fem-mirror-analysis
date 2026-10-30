@@ -35,6 +35,55 @@ TXT = {
         's_rbm': "2. Superficie tras eliminar el movimiento de sólido rígido",
         's_fit': "3. Residuo tras eliminar {n} términos de {fam}",
         's_notes': "{k}. Observaciones",
+        's_opt': "{k}. Calidad óptica",
+        's_iso': "{k}. Tolerancias de forma ISO 10110-5",
+        'combo': "Combinación de casos",
+        'opt_text': ("Error de frente de onda en reflexión WFE = 2·cos θ·(error de superficie), "
+                     "con λ = {lam:g} nm e incidencia θ = {inc:g}°, sin pistón ni tilt. Strehl "
+                     "por la aproximación de Maréchal S ≈ exp[−(2πσ_W/λ)²] y numérico a partir "
+                     "de la PSF calculada por FFT de la pupila."),
+        'opt_surf': "Superficie sin sólido rígido", 'opt_res': "Residuo del ajuste",
+        'opt_h': ["", "σ_W [nm]", "σ_W [λ]", "Strehl (Maréchal)"],
+        'opt_fft': "Strehl numérico (PSF por FFT, {on})",
+        'on_res': "residuo", 'on_surf': "superficie",
+        'opt_note_lo': ("Strehl < 0,3: la aproximación de Maréchal no es fiable; vale el valor "
+                        "numérico."),
+        'opt_note_dl': ("Superficie sin sólido rígido con Strehl ≥ 0,8 (σ_W ≤ λ/14): limitada por "
+                        "difracción a esta longitud de onda (criterio de Maréchal)."),
+        'opt_note_ndl': ("Superficie sin sólido rígido con Strehl < 0,8: no es limitada por "
+                         "difracción a esta λ sin corregir los términos ajustados."),
+        'iso_text': ("Descomposición de la desviación de forma según ISO 10110-5:2015 (Tabla B.2) "
+                     "sobre la apertura, tras quitar tilt. Valores de superficie en nm y en "
+                     "fringe spacings (1 fringe = λ/2 = {fr:g} nm)."),
+        'iso_h': ["Magnitud", "Función", "nm", "fringes"],
+        'iso_rows': [("A · potencia", "PV(f_WS)"), ("B · irregularidad", "PV(f_WI)"),
+                     ("C · irregularidad rot. invariante", "PV(f_WRI)"),
+                     ("PV total", "PV(f_WD)"), ("RMSt · total", "rms(f_WD)"),
+                     ("RMSi · irregularidad", "rms(f_WI)"),
+                     ("RMSa · irreg. asimétrica", "rms(f_WRV)"),
+                     ("PVr · PV robusto", "PVr(f_WD)")],
+        'iso_slope': "Pendiente de f_WI (muestreo de la malla FEM): RMS {r:.3g} µrad · máx {m:.3g} µrad.",
+        'iso_notation': "Valores medidos en notación ISO: {s}",
+        'iso_check': "Comprobación frente a la tolerancia {s}",
+        'iso_ch_h': ["Magnitud", "Medido [nm]", "Tolerancia [nm]", "Resultado"],
+        'ok': "Cumple", 'nok': "No cumple",
+        'iso_method': ("Método: funciones de ISO 14999-4:2007 (3.2–3.3) con RMS ponderado por "
+                       "área nodal. Tilt = plano best-fit (incluye pistón); esfera best-fit "
+                       "aproximada paraxialmente por el término ρ²; parte rotacionalmente "
+                       "invariante (cuyo óptimo rms es la media azimutal) aproximada por "
+                       "polinomios pares en ρ hasta ρ^{nr}; PVr según Evans (Opt. Eng. 48(4), "
+                       "2009), PV del ajuste de 37 Zernike Fringe + 3·RMS del residuo."),
+        'pvr_scope': ("* PVr fuera del alcance de ISO 10110-5:2015 (sólo apertura circular): "
+                      "calculado con Zernike sobre el círculo que circunscribe la apertura."),
+        'fast': ("Superficie rápida (semiapertura/R ≈ {s:.2f}): la esfera best-fit paraxial "
+                 "puede desviar A del orden de un {p:.0f} %."),
+        'iso_sag': ("Con «cambio de sag» los valores corresponden a la desviación de sagita ΔZ "
+                    "(ISO 10110-5, 3.2); la norma define la desviación de forma normal a la "
+                    "superficie (3.1). En espejos planos coinciden."),
+        'n_pvr': ("El PV total ({pv:.3g} nm) es {r:.1f} veces el PV robusto PVr ({pvr:.3g} nm): "
+                  "el PV está dominado por picos locales."),
+        'n_iso_fail': "La superficie NO cumple la tolerancia ISO 10110-5 en: {k}.",
+        'n_iso_ok': "La superficie cumple todas las tolerancias ISO 10110-5 comprobadas.",
         'file': "Fichero de datos",
         'case': "Caso de carga",
         'date': "Fecha del informe",
@@ -46,7 +95,14 @@ TXT = {
         'none': "ninguno",
         'aperture': "Apertura",
         'ap_circ': "Circular · centro ({cx:.3f}, {cy:.3f}) · radio {r:.4g} {u}",
+        'ap_ann': ("Anular · centro ({cx:.3f}, {cy:.3f}) · radios {ri:.4g} / {r:.4g} {u}"
+                   " · obscuración ε = {e:.3f}"),
+        'ap_hex': ("Hexagonal · centro ({cx:.3f}, {cy:.3f}) · circunradio {r:.4g} {u}"
+                   " · vértices en {o}"),
         'ap_rect': "Rectangular · centro ({cx:.3f}, {cy:.3f}) · {w:.4g} × {h:.4g} {u}",
+        'quantity': "Error de superficie",
+        'q_sag': "Cambio de sag Δz = (u·n̂)/n_z (incluye el movimiento en el plano)",
+        'q_normal': "Desplazamiento normal u·n̂",
         'fit': "Ajuste polinómico",
         'fit_desc': "{fam} · {n} términos · normalización {norm} · {method}",
         'no_fit': "No se ha realizado ajuste polinómico",
@@ -55,15 +111,16 @@ TXT = {
         'norm_pico': "pico", 'norm_rms': "RMS",
         'rbm_text': ("Se eliminó el movimiento de sólido rígido ({modes}) por mínimos "
                      "cuadrados ponderados por área sobre toda la superficie. El mapa "
-                     "muestra el desplazamiento normal residual u·n̂, es decir, la "
-                     "deformación de la superficie sin traslaciones ni giros globales."),
+                     "muestra el {qty} residual, es decir, la deformación de la "
+                     "superficie sin traslaciones ni giros globales."),
         'rbm_none_text': ("No se eliminó ningún modo de sólido rígido: el mapa muestra el "
-                          "desplazamiento normal u·n̂ tal como sale del modelo FEM."),
+                          "{qty} tal como sale del modelo FEM."),
+        'qty_sag': "cambio de sag Δz", 'qty_normal': "desplazamiento normal u·n̂",
         'rbm_values': "Movimiento rígido eliminado: {vals}.",
         'fit_text': ("Sobre la apertura {ap} se ajustaron y restaron los términos de la "
                      "tabla siguiente ({method}). El residuo es el error de figura que "
                      "no se corrige con esos términos."),
-        'fig_rbm': "Figura {k}. Desplazamiento normal tras eliminar el sólido rígido.",
+        'fig_rbm': "Figura {k}. Error de superficie tras eliminar el sólido rígido.",
         'fig_res': "Figura {k}. Residuo tras eliminar {n} términos de {fam}.",
         'tab_stats': "Resultados",
         'q': "Magnitud", 'v': "Valor",
@@ -72,9 +129,14 @@ TXT = {
         'pv': "PV (máximo − mínimo)",
         'at': "en ({x:.3g}, {y:.3g})",
         'red': "Reducción de RMS respecto a la sección 2",
-        'term': "Término", 'sc': "Índice SurfCalc", 'desc': "Descripción",
+        'term': "Término", 'sc': "Nº", 'desc': "Descripción",
         'coef': "Coeficiente [{u}]",
-        'cbar': "Desplazamiento normal [{u}]", 'cbar_res': "Residuo [{u}]",
+        'cbar': "Error de superficie [{u}]", 'cbar_res': "Residuo [{u}]",
+        'contrib': "Aporte RMS [{u}]", 'rms_after': "RMS residual [{u}]",
+        'contrib_note': ("Aporte RMS: contribución de cada término al RMS, independiente del "
+                         "número de términos ajustados (Gram–Schmidt sobre los nodos). RMS "
+                         "residual: tras eliminar hasta ese término. Nº: índice en la "
+                         "convención de la base (equivalente al de SurfCalc)."),
         'leg_max': "Máx.", 'leg_min': "Mín.", 'leg_ap': "Apertura",
         'n_reduction': "Eliminar los {n} términos reduce el RMS un {p:.1f} % "
                        "(de {a} a {b}).",
@@ -93,8 +155,12 @@ TXT = {
                   "los nodos. Los valores de RMS y PV del residuo no dependen de la "
                   "normalización de los polinomios."),
         'unit_note': "Valores en {u}, unidades del fichero de entrada.",
-        'zern': "Zernike {conv}", 'cheb': "Chebyshev 2D",
-        'ap_name': {'circular': 'circular', 'rectangular': 'rectangular'},
+        'fam': {'fringe': "Zernike Fringe", 'noll': "Zernike Noll",
+                'annular': "Zernike anulares (Mahajan)",
+                'hexagonal': "polinomios hexagonales (Mahajan–Dai)",
+                'rectangular': "polinomios rectangulares (Mahajan–Dai)"},
+        'ap_name': {'circular': 'circular', 'annular': 'anular',
+                    'hexagonal': 'hexagonal', 'rectangular': 'rectangular'},
     },
     'en': {
         'title': "FEM mirror surface analysis report",
@@ -105,6 +171,54 @@ TXT = {
         's_rbm': "2. Surface after rigid body motion removal",
         's_fit': "3. Residual after removing {n} {fam} terms",
         's_notes': "{k}. Remarks",
+        's_opt': "{k}. Optical quality",
+        's_iso': "{k}. ISO 10110-5 surface form tolerances",
+        'combo': "Load case combination",
+        'opt_text': ("Wavefront error in reflection WFE = 2·cos θ·(surface error), with "
+                     "λ = {lam:g} nm and incidence θ = {inc:g}°, piston and tilt removed. Strehl "
+                     "from the Maréchal approximation S ≈ exp[−(2πσ_W/λ)²] and numerically from "
+                     "the PSF computed by FFT of the pupil."),
+        'opt_surf': "Surface without rigid body motion", 'opt_res': "Fit residual",
+        'opt_h': ["", "σ_W [nm]", "σ_W [λ]", "Strehl (Maréchal)"],
+        'opt_fft': "Numerical Strehl (FFT PSF, {on})",
+        'on_res': "residual", 'on_surf': "surface",
+        'opt_note_lo': "Strehl < 0.3: the Maréchal approximation is not reliable; use the numerical value.",
+        'opt_note_dl': ("Surface without rigid body motion has Strehl ≥ 0.8 (σ_W ≤ λ/14): "
+                        "diffraction-limited at this wavelength (Maréchal criterion)."),
+        'opt_note_ndl': ("Surface without rigid body motion has Strehl < 0.8: not "
+                         "diffraction-limited at this λ unless the fitted terms are corrected."),
+        'iso_text': ("Surface form deviation decomposed according to ISO 10110-5:2015 (Table B.2) "
+                     "over the aperture, after tilt removal. Surface values in nm and in fringe "
+                     "spacings (1 fringe = λ/2 = {fr:g} nm)."),
+        'iso_h': ["Quantity", "Function", "nm", "fringes"],
+        'iso_rows': [("A · power deviation", "PV(f_WS)"), ("B · irregularity", "PV(f_WI)"),
+                     ("C · rot. invariant irregularity", "PV(f_WRI)"),
+                     ("Total PV", "PV(f_WD)"), ("RMSt · total", "rms(f_WD)"),
+                     ("RMSi · irregularity", "rms(f_WI)"),
+                     ("RMSa · asymmetric irregularity", "rms(f_WRV)"),
+                     ("PVr · robust PV", "PVr(f_WD)")],
+        'iso_slope': "Slope of f_WI (FEM mesh sampling): RMS {r:.3g} µrad · max {m:.3g} µrad.",
+        'iso_notation': "Measured values in ISO notation: {s}",
+        'iso_check': "Check against tolerance {s}",
+        'iso_ch_h': ["Quantity", "Measured [nm]", "Tolerance [nm]", "Result"],
+        'ok': "Pass", 'nok': "Fail",
+        'iso_method': ("Method: functions of ISO 14999-4:2007 (3.2–3.3) with RMS weighted by "
+                       "nodal area. Tilt = best-fit plane (includes piston); best-fit sphere "
+                       "approximated paraxially by the ρ² term; rotationally invariant part (whose "
+                       "rms optimum is the azimuthal mean) approximated by even polynomials in ρ "
+                       "up to ρ^{nr}; PVr after Evans (Opt. Eng. 48(4), 2009), PV of a 37-term "
+                       "Fringe Zernike fit + 3·RMS of the residual."),
+        'pvr_scope': ("* PVr outside the scope of ISO 10110-5:2015 (circular apertures only): "
+                      "computed with Zernike over the circle circumscribing the aperture."),
+        'fast': ("Fast surface (semi-aperture/R ≈ {s:.2f}): the paraxial best-fit sphere may "
+                 "bias A by about {p:.0f} %."),
+        'iso_sag': ("With “sag change” the values are sagitta deviation ΔZ (ISO 10110-5, 3.2); "
+                    "the standard defines the surface form deviation normal to the surface (3.1). "
+                    "Both coincide for flat mirrors."),
+        'n_pvr': ("Total PV ({pv:.3g} nm) is {r:.1f} times the robust PVr ({pvr:.3g} nm): PV is "
+                  "dominated by local peaks."),
+        'n_iso_fail': "The surface does NOT meet the ISO 10110-5 tolerance on: {k}.",
+        'n_iso_ok': "The surface meets all checked ISO 10110-5 tolerances.",
         'file': "Data file",
         'case': "Load case",
         'date': "Report date",
@@ -116,7 +230,14 @@ TXT = {
         'none': "none",
         'aperture': "Aperture",
         'ap_circ': "Circular · centre ({cx:.3f}, {cy:.3f}) · radius {r:.4g} {u}",
+        'ap_ann': ("Annular · centre ({cx:.3f}, {cy:.3f}) · radii {ri:.4g} / {r:.4g} {u}"
+                   " · obscuration ε = {e:.3f}"),
+        'ap_hex': ("Hexagonal · centre ({cx:.3f}, {cy:.3f}) · circumradius {r:.4g} {u}"
+                   " · vertices on {o}"),
         'ap_rect': "Rectangular · centre ({cx:.3f}, {cy:.3f}) · {w:.4g} × {h:.4g} {u}",
+        'quantity': "Surface error",
+        'q_sag': "Sag change Δz = (u·n̂)/n_z (includes in-plane motion)",
+        'q_normal': "Normal displacement u·n̂",
         'fit': "Polynomial fit",
         'fit_desc': "{fam} · {n} terms · {norm} normalisation · {method}",
         'no_fit': "No polynomial fit performed",
@@ -124,16 +245,17 @@ TXT = {
         'ls': "ordinary least squares",
         'norm_pico': "peak", 'norm_rms': "RMS",
         'rbm_text': ("Rigid body motion ({modes}) was removed by area-weighted least "
-                     "squares over the whole surface. The map shows the residual normal "
-                     "displacement u·n̂, i.e. the surface deformation without global "
-                     "translations or rotations."),
-        'rbm_none_text': ("No rigid body mode was removed: the map shows the normal "
-                          "displacement u·n̂ as given by the FEM model."),
+                     "squares over the whole surface. The map shows the residual {qty}, "
+                     "i.e. the surface deformation without global translations or "
+                     "rotations."),
+        'rbm_none_text': ("No rigid body mode was removed: the map shows the {qty} as "
+                          "given by the FEM model."),
+        'qty_sag': "sag change Δz", 'qty_normal': "normal displacement u·n̂",
         'rbm_values': "Rigid body motion removed: {vals}.",
         'fit_text': ("Over the {ap} aperture, the terms in the table below were fitted "
                      "and subtracted ({method}). The residual is the figure error that "
                      "those terms cannot correct."),
-        'fig_rbm': "Figure {k}. Normal displacement after rigid body motion removal.",
+        'fig_rbm': "Figure {k}. Surface error after rigid body motion removal.",
         'fig_res': "Figure {k}. Residual after removing {n} {fam} terms.",
         'tab_stats': "Results",
         'q': "Quantity", 'v': "Value",
@@ -142,9 +264,14 @@ TXT = {
         'pv': "PV (maximum − minimum)",
         'at': "at ({x:.3g}, {y:.3g})",
         'red': "RMS reduction with respect to section 2",
-        'term': "Term", 'sc': "SurfCalc index", 'desc': "Description",
+        'term': "Term", 'sc': "No.", 'desc': "Description",
         'coef': "Coefficient [{u}]",
-        'cbar': "Normal displacement [{u}]", 'cbar_res': "Residual [{u}]",
+        'cbar': "Surface error [{u}]", 'cbar_res': "Residual [{u}]",
+        'contrib': "RMS contribution [{u}]", 'rms_after': "Residual RMS [{u}]",
+        'contrib_note': ("RMS contribution: contribution of each term to the RMS, independent "
+                         "of the number of fitted terms (Gram–Schmidt over the nodes). "
+                         "Residual RMS: after removing up to that term. No.: index in the "
+                         "basis convention (same as SurfCalc)."),
         'leg_max': "Max.", 'leg_min': "Min.", 'leg_ap': "Aperture",
         'n_reduction': "Removing the {n} terms reduces the RMS by {p:.1f} % "
                        "(from {a} to {b}).",
@@ -161,8 +288,12 @@ TXT = {
                   "the nodes. Residual RMS and PV do not depend on the polynomial "
                   "normalisation."),
         'unit_note': "Values in {u}, the units of the input file.",
-        'zern': "{conv} Zernike", 'cheb': "2D Chebyshev",
-        'ap_name': {'circular': 'circular', 'rectangular': 'rectangular'},
+        'fam': {'fringe': "Fringe Zernike", 'noll': "Noll Zernike",
+                'annular': "annular Zernike (Mahajan)",
+                'hexagonal': "hexagonal polynomials (Mahajan–Dai)",
+                'rectangular': "rectangular polynomials (Mahajan–Dai)"},
+        'ap_name': {'circular': 'circular', 'annular': 'annular',
+                    'hexagonal': 'hexagonal', 'rectangular': 'rectangular'},
     },
 }
 
@@ -179,23 +310,13 @@ _ZERNIKE_EN = {
     (5, -3): "Secondary trefoil Y", (6, 0): "Secondary spherical",
     (8, 0): "Tertiary spherical",
 }
-_CHEB_EN = {
-    (0, 0): "Piston", (1, 0): "Tilt X", (0, 1): "Tilt Y",
-    (2, 0): "Curvature X (cylinder)", (1, 1): "Twist", (0, 2): "Curvature Y (cylinder)",
-    (3, 0): "Cubic X", (0, 3): "Cubic Y", (2, 1): "x²·y", (1, 2): "x·y²",
-    (4, 0): "Quartic X", (0, 4): "Quartic Y", (2, 2): "x²·y²",
-}
 
 _NM_FACTOR = {'m': 1e9, 'mm': 1e6, 'µm': 1e3, 'um': 1e3, 'nm': 1.0}
 
 
 def _term_name(basis, t, lang):
-    if basis == 'chebyshev':
-        i, j = fma.chebyshev_index2ij(t)
-        if lang == 'en':
-            return _CHEB_EN.get((i, j), f"T{i}(x)·T{j}(y)")
-        return fma.chebyshev_name(i, j)
-    n, m = fma.zernike_index_to_nm(t, basis)
+    """Nombre del término (en las bases ortonormales, el del Zernike que lo genera)."""
+    n, m = fma.term_nm(basis, t)
     if lang == 'en':
         return _ZERNIKE_EN.get((n, m), f"Z(n={n}, m={m:+d})")
     return fma.zernike_name(n, m)
@@ -224,7 +345,8 @@ def surface_stats(values, an, xy):
 
 def build_report_data(params, coor, un, an, pos, rigid, mask, geom,
                       basis=None, terms=None, coeffs=None, residual=None,
-                      wls=True, norm='pico', ndup=0, tilt_deg=0.0):
+                      wls=True, norm='pico', ndup=0, tilt_deg=0.0,
+                      contrib=None, quantity='normal', optics=None):
     """
     Reúne todo lo necesario para el informe (se llama tras el análisis).
 
@@ -242,6 +364,7 @@ def build_report_data(params, coor, un, an, pos, rigid, mask, geom,
         'n_excluded': int((~valid).sum()),
         'n_dup': int(ndup),
         'frame': params.get('frame', 'global'),
+        'quantity': quantity,
         'tilt_deg': float(tilt_deg),
         'rigid': tuple(int(v) for v in rigid),
         'pos': [float(p) for p in pos],
@@ -253,7 +376,16 @@ def build_report_data(params, coor, un, an, pos, rigid, mask, geom,
         'n_ap': int(mask.sum()),
         'coverage': fma.mesh_coverage(xy, an, geom),
         'fit': None,
+        'combo': params.get('combo_desc'),
+        'optics': None,
     }
+    if optics:
+        data['optics'] = {k: optics[k] for k in ('iso', 'wfe_surface', 'wfe_residual', 'check',
+                                                 'units', 'wavelength', 'incidence', 'spec')}
+        data['optics']['tol_warnings'] = (optics['tol'] or {}).get('warnings', [])
+        psf = optics.get('psf') or {}
+        data['optics']['strehl_fft'] = psf.get('strehl')
+        data['optics']['psf_on'] = psf.get('on')
     if basis is not None and terms is not None and coeffs is not None and residual is not None:
         res_full = np.full(len(coor), np.nan)
         res_full[mask] = residual
@@ -270,6 +402,9 @@ def build_report_data(params, coor, un, an, pos, rigid, mask, geom,
             'residual': res_full,
             'stats': st_res,
             'rms_before': rms_before,
+            'contrib': None if contrib is None else
+                       [np.asarray(contrib[0]).tolist(), np.asarray(contrib[1]).tolist(),
+                        np.asarray(contrib[2]).tolist()],
         }
     return data
 
@@ -281,13 +416,11 @@ def build_report_data(params, coor, un, an, pos, rigid, mask, geom,
 def _map_png(x, y, z, geom, cbar_label, units, T):
     """Mapa de color del campo z (NaN fuera) con contorno de apertura y máx/mín."""
     from matplotlib.figure import Figure
-    import matplotlib.tri as mtri
-    import matplotlib.patches as mpatches
 
     ok = np.isfinite(z)
     fig = Figure(figsize=(6.4, 4.9), dpi=200)
     ax = fig.add_subplot(111)
-    tri = mtri.Triangulation(x[ok], y[ok])
+    tri = fma.plot_triangulation(x[ok], y[ok])
     cf = ax.tricontourf(tri, z[ok], levels=64, cmap=fma.surface_cmap())
     cb = fig.colorbar(cf, ax=ax, shrink=0.9)
     cb.set_label(cbar_label)
@@ -296,13 +429,8 @@ def _map_png(x, y, z, geom, cbar_label, units, T):
 
     # Contorno de la apertura
     if geom:
-        cx, cy = geom['center']
-        kw = dict(edgecolor='black', facecolor='none', lw=1.0, ls='--', zorder=5)
-        if geom['type'] == 'circular':
-            ax.add_patch(mpatches.Circle((cx, cy), geom['radius'], **kw))
-        elif geom['type'] == 'rectangular':
-            w, h = geom['width'], geom['height']
-            ax.add_patch(mpatches.Rectangle((cx - w / 2, cy - h / 2), w, h, **kw))
+        for xs, ys in fma.aperture_outline(geom):
+            ax.plot(xs, ys, color='black', lw=1.0, ls='--', zorder=5)
 
     # Máximo y mínimo
     zi = np.where(ok)[0]
@@ -485,12 +613,17 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
     cx, cy = [0.0 if abs(v) < 5e-4 else v for v in g['center']]   # evita "-0.000"
     if g['type'] == 'circular':
         ap = T['ap_circ'].format(cx=cx, cy=cy, r=g['radius'], u=units)
+    elif g['type'] == 'annular':
+        ap = T['ap_ann'].format(cx=cx, cy=cy, r=g['radius'], ri=g['inner_radius'],
+                                e=g['eps'], u=units)
+    elif g['type'] == 'hexagonal':
+        ap = T['ap_hex'].format(cx=cx, cy=cy, r=g['radius'], u=units,
+                                o='±X' if abs(g.get('rotation', 0)) < 1 else '±Y')
     else:
         ap = T['ap_rect'].format(cx=cx, cy=cy, w=g['width'], h=g['height'], u=units)
     modes = [m for m, f in zip(['Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz'], data['rigid']) if f]
     if fit:
-        fam = (T['cheb'] if fit['basis'] == 'chebyshev'
-               else T['zern'].format(conv=fit['basis'].capitalize()))
+        fam = T['fam'][fit['basis']]
         fit_txt = T['fit_desc'].format(
             fam=fam, n=len(fit['terms']), norm=T['norm_' + fit['norm']],
             method=T['wls'] if fit['wls'] else T['ls'])
@@ -499,12 +632,15 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
     rows = [[T['file'], os.path.basename(data['fname'] or '—')]]
     if data.get('case') is not None:
         rows.append([T['case'], f"{data['case']:g}"])
+    if data.get('combo'):
+        rows.append([T['combo'], ' · '.join(data['combo'])])
     rows += [
         [T['date'], _dt.datetime.now().strftime('%Y-%m-%d %H:%M')],
         [T['nodes'], f"{data['n_valid']:,} / {data['n_read']:,}"],
         [T['frame'], T['frame_global'] if data['frame'] != 'bestfit'
                      else T['frame_bestfit'].format(t=data['tilt_deg'])],
         [T['rigid'], ', '.join(modes) if modes else T['none']],
+        [T['quantity'], T['q_' + data.get('quantity', 'normal')]],
         [T['aperture'], ap],
         [T['fit'], fit_txt],
     ]
@@ -517,7 +653,8 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
     k_fig = 1
     doc.add_heading(T['s_rbm'], level=1)
     if modes:
-        doc.add_paragraph(T['rbm_text'].format(modes=', '.join(modes)))
+        doc.add_paragraph(T['rbm_text'].format(modes=', '.join(modes),
+                                               qty=T['qty_' + data.get('quantity', 'normal')]))
         vals = []
         for i, m in enumerate(['Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz']):
             if data['rigid'][i]:
@@ -526,7 +663,7 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
         pr = doc.add_paragraph(T['rbm_values'].format(vals='; '.join(vals)))
         pr.runs[0].font.size = Pt(9)
     else:
-        doc.add_paragraph(T['rbm_none_text'])
+        doc.add_paragraph(T['rbm_none_text'].format(qty=T['qty_' + data.get('quantity', 'normal')]))
     img = _map_png(data['x'], data['y'], data['un'], g,
                    T['cbar'].format(u=units), units, T)
     doc.add_picture(img, width=Cm(12.5))
@@ -543,11 +680,23 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
             ap=T['ap_name'].get(data['aperture'], data['aperture']),
             method=T['wls'] if fit['wls'] else T['ls']))
         trows = []
-        for t, c in zip(fit['terms'], fit['coeffs']):
+        con = fit.get('contrib')
+        for k, (t, c) in enumerate(zip(fit['terms'], fit['coeffs'])):
             lab, sc, _, _ = fma.term_info(fit['basis'], t)
-            trows.append([lab, str(sc), _term_name(fit['basis'], t, lang), f"{c:+.3e}"])
-        _table(doc, trows, header=[T['term'], T['sc'], T['desc'], T['coef'].format(u=units)],
-               widths=[2.0, 2.6, 8.4, 4.0])
+            row = [lab, str(sc), _term_name(fit['basis'], t, lang), f"{c:+.3e}"]
+            if con:
+                row += [f"{con[0][k]:.3e}", f"{con[1][k]:.3e}"]
+            trows.append(row)
+        header = [T['term'], T['sc'], T['desc'], T['coef'].format(u=units)]
+        widths = [1.5, 1.1, 6.6, 2.7]
+        if con:
+            header += [T['contrib'].format(u=units), T['rms_after'].format(u=units)]
+            widths += [2.6, 2.7]
+        _table(doc, trows, header=header, widths=widths)
+        if con:
+            pn = doc.add_paragraph(T['contrib_note'])
+            pn.runs[0].font.size = Pt(8.5)
+            pn.runs[0].italic = True
         img = _map_png(data['x'], data['y'], fit['residual'], g,
                        T['cbar_res'].format(u=units), units, T)
         doc.add_picture(img, width=Cm(12.5))
@@ -560,6 +709,68 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
                                 extra=[[T['red'], f"{red:.1f} %"]]),
                widths=[5.0, 12.0])
 
+    # ── Calidad óptica e ISO 10110-5 ─────────────────────────────────────────
+    k_sec = 4 if fit else 3
+    opt = data.get('optics')
+    if opt:
+        lam = opt['wavelength']
+        doc.add_heading(T['s_opt'].format(k=k_sec), level=1)
+        k_sec += 1
+        doc.add_paragraph(T['opt_text'].format(lam=lam, inc=opt['incidence']))
+        orows = []
+        for key, lab in (('wfe_surface', 'opt_surf'), ('wfe_residual', 'opt_res')):
+            oq = opt.get(key)
+            if oq:
+                orows.append([T[lab], f"{oq['wfe_rms_nm']:.3f}",
+                              f"{oq['wfe_rms_waves']:.4f}" + (f"  (λ/{1/oq['wfe_rms_waves']:.0f})"
+                                                              if oq['wfe_rms_waves'] > 0 else ""),
+                              f"{oq['strehl']:.4f}"])
+        _table(doc, orows, header=T['opt_h'], widths=[6.0, 3.0, 4.0, 4.0])
+        if opt.get('strehl_fft') is not None:
+            on = T['on_res'] if opt.get('psf_on') == 'residual' else T['on_surf']
+            doc.add_paragraph(f"{T['opt_fft'].format(on=on)}: {opt['strehl_fft']:.4f}")
+
+        iso = opt['iso']
+        fr = lam / 2.0
+        doc.add_heading(T['s_iso'].format(k=k_sec), level=1)
+        k_sec += 1
+        doc.add_paragraph(T['iso_text'].format(fr=fr))
+        keys = ['A', 'B', 'C', 'PV', 'RMSt', 'RMSi', 'RMSa', 'PVr']
+        irows = []
+        for key, (lab, fn) in zip(keys, T['iso_rows']):
+            v = iso.get(key)
+            if v is None:
+                continue
+            if key == 'PVr' and not iso.get('PVr_in_scope', True):
+                lab += ' *'
+            irows.append([lab, fn, f"{v:.3f}", f"{v / fr:.4f}"])
+        _table(doc, irows, header=T['iso_h'], widths=[6.5, 3.0, 3.5, 3.5])
+        extra_notes = []
+        if iso.get('PVr') is not None and not iso.get('PVr_in_scope', True):
+            extra_notes.append(T['pvr_scope'])
+        if iso.get('sphere_s') and iso['sphere_s'] ** 2 / 4 > 0.01:
+            extra_notes.append(T['fast'].format(s=iso['sphere_s'], p=100 * iso['sphere_s'] ** 2 / 4))
+        for en_ in extra_notes:
+            pe = doc.add_paragraph(en_)
+            pe.runs[0].font.size = Pt(9)
+        if iso.get('slope_rms_urad') is not None:
+            doc.add_paragraph(T['iso_slope'].format(r=iso['slope_rms_urad'], m=iso['slope_max_urad']))
+        comma = lang != 'en'
+        doc.add_paragraph(T['iso_notation'].format(s=fma.format_iso10110(iso, comma=comma)))
+        if opt.get('spec'):
+            doc.add_paragraph(T['iso_check'].format(s=opt['spec']))
+            for wmsg in opt.get('tol_warnings', []):
+                pw = doc.add_paragraph(f"⚠ {wmsg}")
+                pw.runs[0].font.size = Pt(9)
+            if opt['check']:
+                _table(doc, [[k_, f"{m_:.3f}", f"{l_:.3f}", T['ok'] if ok_ else T['nok']]
+                             for k_, m_, l_, ok_ in opt['check']],
+                       header=T['iso_ch_h'], widths=[3.5, 4.0, 4.0, 4.0])
+        for key in ('iso_method',) + (('iso_sag',) if data.get('quantity') == 'sag' else ()):
+            pm = doc.add_paragraph(T[key].format(nr=2 * iso.get('n_radial', 12)))
+            pm.runs[0].font.size = Pt(8.5)
+            pm.runs[0].italic = True
+
     # ── Observaciones ────────────────────────────────────────────────────────
     notes = []
     if fit:
@@ -568,8 +779,10 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
             notes.append(T['n_reduction'].format(n=len(fit['terms']),
                                                  p=(1 - ra / rb) * 100,
                                                  a=f"{rb:.3e} {units}", b=f"{ra:.3e} {units}"))
-        cand = [(abs(c), t, c) for t, c in zip(fit['terms'], fit['coeffs'])
-                if not (fit['basis'] == 'noll' and t == 1) and t != 0]
+        con = fit.get('contrib')
+        size = con[0] if con else [abs(c) for c in fit['coeffs']]
+        cand = [(sz, t, c) for sz, t, c in zip(size, fit['terms'], fit['coeffs'])
+                if fma.term_nm(fit['basis'], t) != (0, 0)]
         if cand:
             _, t, c = max(cand)
             notes.append(T['n_dom'].format(name=_term_name(fit['basis'], t, lang),
@@ -577,17 +790,31 @@ def generate_report(data, path, lang='es', units='mm', logo_png=None):
     # Picos localizados: una sola observación (la primera superficie que los muestre)
     for st_, where in ((data['stats_total'], 'where_rbm'),
                        (fit['stats'] if fit else None, 'where_res')):
-        if st_ and st_['rms'] > 0 and st_['pv'] / st_['rms'] > 10:
+        ref = data['stats_total']['rms'] if data.get('stats_total') else 0.0
+        if st_ and st_['rms'] > 1e-6 * ref and st_['pv'] / st_['rms'] > 10:
             notes.append(T['n_spikes'].format(r=st_['pv'] / st_['rms'], where=T[where],
                                               x=st_['xy_max'][0], y=st_['xy_max'][1]))
             break
+    if opt:
+        strehls = [o['strehl'] for o in (opt.get('wfe_surface'), opt.get('wfe_residual')) if o]
+        smin = min(strehls)
+        if smin < 0.3:
+            notes.append(T['opt_note_lo'])
+        s_ref = opt['wfe_surface']['strehl']
+        notes.append(T['opt_note_dl'] if s_ref >= 0.8 else T['opt_note_ndl'])
+        iso = opt['iso']
+        if iso.get('PVr') and iso['PVr'] > 0 and iso['PV'] / iso['PVr'] > 1.5:
+            notes.append(T['n_pvr'].format(pv=iso['PV'], r=iso['PV'] / iso['PVr'], pvr=iso['PVr']))
+        if opt.get('check'):
+            bad = [k_ for k_, _, _, ok_ in opt['check'] if not ok_]
+            notes.append(T['n_iso_fail'].format(k=', '.join(bad)) if bad else T['n_iso_ok'])
     if data.get('coverage') is not None and data['coverage'] < 0.82:
         notes.append(T['n_cover'].format(p=100 * data['coverage']))
     if data['n_excluded']:
         notes.append(T['n_excl'].format(n=data['n_excluded']))
     notes.append(T['n_def'])
 
-    h = doc.add_heading(T['s_notes'].format(k=4 if fit else 3), level=1)
+    h = doc.add_heading(T['s_notes'].format(k=k_sec), level=1)
     h.paragraph_format.keep_with_next = True
     for n_ in notes:
         doc.add_paragraph(n_, style='List Bullet')
