@@ -129,6 +129,25 @@ ZERNIKE_CONVENTIONS = ('fringe', 'noll')
 FRINGE_MAX_TERMS = 37      # el conjunto Fringe estándar termina en Z37 = (12, 0)
 
 
+def surface_cmap():
+    """
+    Escala de color de los mapas de superficie, con el mismo convenio que
+    ANSYS: azul = valor mínimo -> cian -> verde -> amarillo -> rojo = máximo.
+    'turbo' (matplotlib >= 3.3); si no existe, 'jet'.
+    """
+    import matplotlib
+    try:
+        matplotlib.colormaps['turbo']
+        return 'turbo'
+    except Exception:
+        try:
+            import matplotlib.cm as _cm
+            _cm.get_cmap('turbo')
+            return 'turbo'
+        except Exception:
+            return 'jet'
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  POLINOMIOS DE ZERNIKE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -964,7 +983,7 @@ def plot_results(coor, un, mask, residual, aperture_name, output_file='fem_analy
 
     ok = np.isfinite(un)
     triang_full = mtri.Triangulation(x[ok], y[ok])
-    cf1 = axes[0].tricontourf(triang_full, un[ok], levels=64, cmap='RdBu_r')
+    cf1 = axes[0].tricontourf(triang_full, un[ok], levels=64, cmap=surface_cmap())
     plt.colorbar(cf1, ax=axes[0], label='Desplazamiento normal')
     axes[0].set_title('Desplazamiento normal\n(tras quitar sólido rígido)')
     axes[0].set_aspect('equal')
@@ -976,7 +995,7 @@ def plot_results(coor, un, mask, residual, aperture_name, output_file='fem_analy
     valid = np.isfinite(un_res_full)
     if valid.sum() > 3:
         triang_ap = mtri.Triangulation(x[valid], y[valid])
-        cf2 = axes[1].tricontourf(triang_ap, un_res_full[valid], levels=64, cmap='RdBu_r')
+        cf2 = axes[1].tricontourf(triang_ap, un_res_full[valid], levels=64, cmap=surface_cmap())
         plt.colorbar(cf2, ax=axes[1], label='Residuo')
     axes[1].set_title(f'Residuo tras el ajuste\n(apertura {aperture_name})')
     axes[1].set_aspect('equal')
@@ -1194,7 +1213,7 @@ def main():
             ok = np.isfinite(un)
             fig, ax = plt.subplots(figsize=(8, 7))
             cf = ax.tricontourf(mtri.Triangulation(coor[ok, 0], coor[ok, 1]),
-                                un[ok], levels=64, cmap='RdBu_r')
+                                un[ok], levels=64, cmap=surface_cmap())
             plt.colorbar(cf, ax=ax, label='Desplazamiento normal')
             ax.set_title('Desplazamiento normal (tras quitar sólido rígido)')
             ax.set_aspect('equal')

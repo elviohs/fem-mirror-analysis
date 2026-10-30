@@ -17,6 +17,7 @@ Herramienta Python para el análisis de superficies de espejos a partir de resul
 - Cálculo de **RMS**, **RMS respecto a la media** y **PV** sobre la apertura
 - Simulación de **PSF** (Point Spread Function) por transformada de Fourier
 - **Vista 3D interactiva** de la superficie de deformación con escala Z configurable
+- **Informe Word** (español o inglés) con los mapas de la superficie sin sólido rígido y del residuo, RMS, máximo, mínimo, PV, términos eliminados y observaciones automáticas
 - Coordenadas + valor interpolado al pasar el ratón por encima de los gráficos
 
 ## Requisitos
@@ -25,6 +26,7 @@ Herramienta Python para el análisis de superficies de espejos a partir de resul
 - numpy
 - scipy
 - matplotlib
+- python-docx (solo para los informes Word)
 
 Instalación rápida de dependencias en Windows:
 
@@ -35,7 +37,7 @@ instalar_dependencias.bat
 O directamente:
 
 ```bash
-pip install numpy scipy matplotlib
+pip install numpy scipy matplotlib python-docx
 ```
 
 ## Uso
@@ -52,7 +54,7 @@ O directamente:
 python gui_fem_mirror.py
 ```
 
-La GUI permite cargar el fichero de datos FEM, configurar los parámetros y ejecutar el análisis con un clic. Tras el análisis, el botón 🎨 **Vista 3D** abre una ventana interactiva con la superficie de deformación.
+La GUI permite cargar el fichero de datos FEM, configurar los parámetros y ejecutar el análisis con un clic. Tras el análisis, el botón 🎨 **Vista 3D** abre una ventana interactiva con la superficie de deformación, y el botón 📄 **Generar informe** crea un documento Word en el idioma y unidades seleccionados.
 
 ### Modo consola
 
@@ -84,6 +86,7 @@ donde `X`, `Y`, `Z` son las coordenadas del nodo y `dX`, `dY`, `dZ` los desplaza
 ```
 ├── gui_fem_mirror.py          # Interfaz gráfica principal
 ├── fem_mirror_analysis.py     # Motor de análisis (también ejecutable en consola)
+├── report_fem_mirror.py       # Generación de informes Word (ES/EN)
 ├── ejecutar_gui_fem.bat       # Acceso rápido a la GUI (Windows)
 ├── ejecutar_fem_mirror.bat    # Acceso rápido al modo consola (Windows)
 └── instalar_dependencias.bat  # Instalador de dependencias (Windows)
@@ -91,4 +94,4 @@ donde `X`, `Y`, `Z` son las coordenadas del nodo y `dX`, `dY`, `dZ` los desplaza
 
 ## Origen
 
-Desarrollado en el [Instituto de Astrofísica de Canarias (IAC)](https://www.iac.es) para el análisis de superficies de espejos en el contexto del proyecto E-ELT.
+Desarrollado en el [Instituto de Astrofísica de Canarias (IAC)](https://www.iac.es) para el análisis de superficies de espejos en el contexto de proyectos de instrumentos astrofísicos.

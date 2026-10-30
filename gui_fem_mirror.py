@@ -33,12 +33,12 @@ APERTURES_DISABLED = ('Anular', 'Hexagonal')      # pendientes de implementar
 
 def _draw_aperture_boundary(ax, geom):
     """
-    Dibuja el contorno de la apertura (línea amarilla discontinua) sobre 'ax'
+    Dibuja el contorno de la apertura (línea negra discontinua) sobre 'ax'
     usando la geometría devuelta por fem_mirror_analysis.apply_aperture.
     """
     import matplotlib.patches as mpatches
 
-    kw_patch = dict(edgecolor='gold', facecolor='none', lw=1.5, ls='--', zorder=5)
+    kw_patch = dict(edgecolor='black', facecolor='none', lw=1.5, ls='--', zorder=5)
     cx, cy = geom['center']
     if geom['type'] == 'circular':
         ax.add_patch(mpatches.Circle((cx, cy), geom['radius'], **kw_patch))
@@ -174,6 +174,24 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
             rms_res = m.rms_area_weighted(residual, an_ap)
             pv_res  = m.peak_to_valley(residual)
 
+        # ── 4b. Datos para el informe Word ───────────────────────────────
+        report_data = None
+        try:
+            import report_fem_mirror as rp
+            if nterms > 0:
+                report_data = rp.build_report_data(
+                    params, coor, un, an, pos, rigid, mask, geom,
+                    basis=basis, terms=term_indices, coeffs=coeffs,
+                    residual=residual, wls=params['wls'], norm=norm,
+                    ndup=ndup, tilt_deg=tilt)
+            else:
+                report_data = rp.build_report_data(
+                    params, coor, un, an, pos, rigid, mask, geom,
+                    ndup=ndup, tilt_deg=tilt)
+        except Exception:
+            log(f"\n⚠ No se pudieron preparar los datos del informe:\n"
+                f"{traceback.format_exc()}\n")
+
         # ── 5. Figura ────────────────────────────────────────────────────
         log("\nGenerando figura…\n")
 
@@ -195,7 +213,7 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                 valid_full = np_local.isfinite(un)
                 if valid_full.sum() > 3:
                     tri_full = mtri.Triangulation(x[valid_full], y[valid_full])
-                    cf1 = axes[0].tricontourf(tri_full, un[valid_full], levels=64, cmap='gist_rainbow')
+                    cf1 = axes[0].tricontourf(tri_full, un[valid_full], levels=64, cmap=m.surface_cmap())
                     plt.colorbar(cf1, ax=axes[0], label='Despl. normal')
                 else:
                     axes[0].text(0.5, 0.5, 'Sin datos válidos', ha='center', va='center',
@@ -223,7 +241,7 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                 valid = ~np_local.isnan(un_res_full)
                 if valid.sum() > 3:
                     tri_ap = mtri.Triangulation(x[valid], y[valid])
-                    cf2 = axes[1].tricontourf(tri_ap, un_res_full[valid], levels=64, cmap='gist_rainbow')
+                    cf2 = axes[1].tricontourf(tri_ap, un_res_full[valid], levels=64, cmap=m.surface_cmap())
                     plt.colorbar(cf2, ax=axes[1], label=f'Residuo {fam}')
 
                     # Interpolador para mostrar valor z al pasar el ratón (panel 1)
@@ -323,14 +341,14 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                 except Exception:
                     pass   # si hay < 3 puntos válidos, ConvexHull falla — ignorar
 
-                # ── Contorno de apertura teórica (línea amarilla discontinua) ──
+                # ── Contorno de apertura teórica (línea negra discontinua) ──
                 _draw_aperture_boundary(axes[0], geom)
                 _draw_aperture_boundary(axes[1], geom)
 
                 # ── Leyenda (solo paneles de superficie) ─────────────────────
                 import matplotlib.lines as mlines
                 leg_data = mlines.Line2D([], [], color='white', lw=1.4, label='Límite datos FEM')
-                leg_ap   = mlines.Line2D([], [], color='gold', lw=1.5, ls='--',
+                leg_ap   = mlines.Line2D([], [], color='black', lw=1.5, ls='--',
                                           label=f'Apertura {aperture}')
                 for ax in axes[:2]:
                     ax.legend(handles=[leg_data, leg_ap], loc='lower right',
@@ -350,6 +368,7 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                         'pv_res':   pv_res,
                         'nterms':   nterms,
                         'aperture': aperture,
+                        'report':   report_data,
                     }
 
                 # Mostrar en la GUI (embebida) o en ventana externa
@@ -560,6 +579,23 @@ class App(tk.Tk):
         self.btn_3d = ttk.Button(frm_3d, text="🎨  Vista 3D",
                                  command=self._show_3d, state='disabled')
         self.btn_3d.grid(row=0, column=2)
+
+        # ── Informe Word (junto a Vista 3D) ────────────────────────────
+        ttk.Separator(frm_3d, orient='vertical').grid(
+            row=0, column=3, sticky='ns', padx=14, pady=2)
+        ttk.Label(frm_3d, text="Informe:").grid(row=0, column=4, padx=(0, 4))
+        self.report_lang_var = tk.StringVar(value='Español')
+        ttk.Combobox(frm_3d, textvariable=self.report_lang_var, width=8,
+                     state='readonly', values=['Español', 'English']).grid(
+            row=0, column=5, padx=(0, 8))
+        ttk.Label(frm_3d, text="Unidades:").grid(row=0, column=6, padx=(0, 4))
+        self.report_units_var = tk.StringVar(value='mm')
+        ttk.Combobox(frm_3d, textvariable=self.report_units_var, width=5,
+                     values=['mm', 'm', 'µm', 'nm']).grid(row=0, column=7, padx=(0, 8))
+        self.btn_report = ttk.Button(frm_3d, text="📄  Generar informe",
+                                     command=self._make_report, state='disabled')
+        self.btn_report.grid(row=0, column=8)
+
         self.frm_fig.columnconfigure(0, weight=1)
         self.frm_fig.rowconfigure(0, weight=1)
 
@@ -792,6 +828,7 @@ class App(tk.Tk):
 
         self.btn_run.configure(state='disabled', text="Ejecutando…")
         self.btn_3d.configure(state='disabled')
+        self.btn_report.configure(state='disabled')
         self._clear_log()
         self._result_store[0] = None   # borrar resultado anterior
 
@@ -799,6 +836,8 @@ class App(tk.Tk):
             self.btn_run.configure(state='normal', text="▶  Ejecutar análisis")
             if self._result_store[0] is not None:
                 self.btn_3d.configure(state='normal')
+                if self._result_store[0].get('report') is not None:
+                    self.btn_report.configure(state='normal')
 
         def _thread():
             run_analysis(params, self._log, self.after,
@@ -808,6 +847,68 @@ class App(tk.Tk):
 
         threading.Thread(target=_thread, daemon=True).start()
 
+    def _make_report(self):
+        """Genera el informe Word del último análisis."""
+        import base64
+        data = self._result_store[0]
+        if data is None or data.get('report') is None:
+            messagebox.showinfo("Sin datos", "Ejecuta primero el análisis.")
+            return
+        try:
+            import docx  # noqa: F401
+        except ImportError:
+            messagebox.showerror(
+                "Falta python-docx",
+                "Para generar informes hace falta la librería python-docx.\n\n"
+                "Ejecuta instalar_dependencias.bat o, en una consola:\n"
+                "    python -m pip install python-docx")
+            return
+        import report_fem_mirror as rp
+
+        lang = 'en' if self.report_lang_var.get() == 'English' else 'es'
+        units = self.report_units_var.get().strip() or 'mm'
+        rep = data['report']
+        base = os.path.splitext(os.path.basename(rep.get('fname') or 'analisis'))[0]
+        if rep.get('case') is not None:
+            base += f"_caso{rep['case']:g}"
+        default = f"{'Report' if lang == 'en' else 'Informe'}_{base}.docx"
+        path = filedialog.asksaveasfilename(
+            title="Guardar informe Word", defaultextension=".docx",
+            initialdir=os.path.dirname(rep.get('fname') or '') or None,
+            initialfile=default, filetypes=[("Documento Word", "*.docx")])
+        if not path:
+            return
+
+        self.configure(cursor='watch')
+        self.btn_report.configure(state='disabled', text="Generando…")
+        self.update_idletasks()
+        try:
+            rp.generate_report(rep, path, lang=lang, units=units,
+                               logo_png=base64.b64decode(_LOGO_B64))
+        except PermissionError:
+            messagebox.showerror("No se pudo guardar",
+                                 f"No se puede escribir en:\n{path}\n\n"
+                                 "¿Está abierto en Word? Ciérralo e inténtalo de nuevo.")
+            return
+        except Exception:
+            messagebox.showerror("Error al generar el informe", traceback.format_exc())
+            return
+        finally:
+            self.configure(cursor='')
+            self.btn_report.configure(state='normal', text="📄  Generar informe")
+
+        self._log(f"\n📄 Informe guardado en: {path}\n")
+        if messagebox.askyesno("Informe generado",
+                               f"Informe guardado en:\n{path}\n\n¿Abrirlo ahora?"):
+            try:
+                if sys.platform.startswith('win'):
+                    os.startfile(path)                     # noqa: S606
+                elif sys.platform == 'darwin':
+                    import subprocess; subprocess.Popen(['open', path])
+                else:
+                    import subprocess; subprocess.Popen(['xdg-open', path])
+            except Exception as e:
+                messagebox.showwarning("No se pudo abrir", str(e))
 
     def _show_3d(self):
         """Abre una ventana Toplevel con la superficie deformada en 3D."""
@@ -853,7 +954,8 @@ class App(tk.Tk):
         ax  = fig.add_subplot(111, projection='3d')
 
         tri  = mtri.Triangulation(xv, yv)
-        surf = ax.plot_trisurf(tri, zv, cmap='gist_rainbow',
+        import fem_mirror_analysis as _fma
+        surf = ax.plot_trisurf(tri, zv, cmap=_fma.surface_cmap(),
                                linewidth=0, antialiased=True, alpha=0.92)
 
         cb = fig.colorbar(surf, ax=ax, shrink=0.55, pad=0.1)
