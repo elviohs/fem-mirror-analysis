@@ -367,6 +367,13 @@ def run_analysis(params, log, schedule, embed_fig=None, result_store=None):
                         'nterms':   nterms,
                         'aperture': aperture,
                         'report':   report_data,
+                        'export': {
+                            'xy': xy[mask], 'un': un_ap,
+                            'res': residual if nterms > 0 else None,
+                            'w': an_ap, 'geom': geom, 'units': params['units'],
+                            'quantity': params['quantity'], 'frame': params['frame'],
+                            'fname': params.get('fname'), 'case': params.get('case'),
+                        },
                     }
 
                 # Mostrar en la GUI (embebida) o en ventana externa
@@ -623,6 +630,13 @@ class App(tk.Tk):
         self.btn_report = ttk.Button(frm_3d, text="📄  Generar informe",
                                      command=self._make_report, state='disabled')
         self.btn_report.grid(row=0, column=8)
+
+        # ── Exportación a Zemax / QUADOA ───────────────────────────────
+        ttk.Separator(frm_3d, orient='vertical').grid(
+            row=0, column=9, sticky='ns', padx=14, pady=2)
+        self.btn_export = ttk.Button(frm_3d, text="🔭  Exportar Zemax / QUADOA…",
+                                     command=self._open_export, state='disabled')
+        self.btn_export.grid(row=0, column=10)
 
         self.frm_fig.columnconfigure(0, weight=1)
         self.frm_fig.rowconfigure(0, weight=1)
@@ -905,6 +919,7 @@ class App(tk.Tk):
         self.btn_run.configure(state='disabled', text="Ejecutando…")
         self.btn_3d.configure(state='disabled')
         self.btn_report.configure(state='disabled')
+        self.btn_export.configure(state='disabled')
         self._clear_log()
         self._result_store[0] = None   # borrar resultado anterior
 
@@ -914,6 +929,8 @@ class App(tk.Tk):
                 self.btn_3d.configure(state='normal')
                 if self._result_store[0].get('report') is not None:
                     self.btn_report.configure(state='normal')
+                if self._result_store[0].get('export') is not None:
+                    self.btn_export.configure(state='normal')
 
         def _thread():
             run_analysis(params, self._log, self.after,
@@ -922,6 +939,15 @@ class App(tk.Tk):
             self.after(0, _done)
 
         threading.Thread(target=_thread, daemon=True).start()
+
+    def _open_export(self):
+        data = self._result_store[0]
+        if data is None or data.get('export') is None:
+            messagebox.showinfo("Sin datos", "Ejecuta primero el análisis.")
+            return
+        if getattr(self, '_export_win', None) is not None and self._export_win.winfo_exists():
+            self._export_win.destroy()
+        self._export_win = ExportDialog(self, data['export'])
 
     def _open_combine(self):
         if getattr(self, '_combine_win', None) is not None and self._combine_win.winfo_exists():
@@ -1096,6 +1122,130 @@ class App(tk.Tk):
 # ═══════════════════════════════════════════════════════════════════
 #  COMBINACIÓN DE CASOS DE CARGA
 # ═══════════════════════════════════════════════════════════════════
+
+class ExportDialog(tk.Toplevel):
+    """
+    Exporta la superficie del último análisis a Zemax OpticStudio (Grid Sag
+    .DAT) y QUADOA (CSV x, y, z), y los coeficientes de Zernike (Fringe,
+    Standard/Noll y ANSI) en unidades de lente.
+    """
+
+    def __init__(self, app, exp):
+        super().__init__(app)
+        self.app, self.exp = app, exp
+        self.title("Exportar a Zemax / QUADOA")
+        self.resizable(False, False)
+        pad = dict(padx=8, pady=4)
+
+        frm_s = ttk.LabelFrame(self, text="Superficie a exportar")
+        frm_s.grid(row=0, column=0, sticky='ew', **pad)
+        self.surf_var = tk.StringVar(value='sin_rigido')
+        ttk.Radiobutton(frm_s, text="Sin sólido rígido (recomendado)", variable=self.surf_var,
+                        value='sin_rigido').grid(row=0, column=0, sticky='w', padx=6, pady=2)
+        rb = ttk.Radiobutton(frm_s, text="Residuo tras el ajuste polinómico",
+                             variable=self.surf_var, value='residuo')
+        rb.grid(row=1, column=0, sticky='w', padx=6, pady=2)
+        if exp.get('res') is None:
+            rb.configure(state='disabled')
+            ttk.Label(frm_s, text="(sin ajuste: términos = 0)", foreground='gray').grid(
+                row=1, column=1, sticky='w')
+
+        frm_o = ttk.LabelFrame(self, text="Opciones")
+        frm_o.grid(row=1, column=0, sticky='ew', **pad)
+        ttk.Label(frm_o, text="Unidades de lente:").grid(row=0, column=0, sticky='w', padx=6, pady=3)
+        self.lu_var = tk.StringVar(value='mm')
+        ttk.Combobox(frm_o, textvariable=self.lu_var, width=6, state='readonly',
+                     values=['mm', 'm', 'cm', 'in']).grid(row=0, column=1, sticky='w')
+        ttk.Label(frm_o, text=f"(fichero FEM en {exp['units']})", foreground='gray').grid(
+            row=0, column=2, sticky='w', padx=6)
+        ttk.Label(frm_o, text="Puntos de rejilla por lado:").grid(row=1, column=0, sticky='w',
+                                                                   padx=6, pady=3)
+        self.n_var = tk.StringVar(value='101')
+        ttk.Entry(frm_o, textvariable=self.n_var, width=7).grid(row=1, column=1, sticky='w')
+        ttk.Label(frm_o, text="(impar, ≥ 5)", foreground='gray').grid(row=1, column=2, sticky='w',
+                                                                      padx=6)
+        ttk.Label(frm_o, text="Interpolación:").grid(row=2, column=0, sticky='w', padx=6, pady=3)
+        self.interp_var = tk.StringVar(value='lineal')
+        ttk.Combobox(frm_o, textvariable=self.interp_var, width=8, state='readonly',
+                     values=['lineal', 'cúbica']).grid(row=2, column=1, sticky='w')
+        ttk.Label(frm_o, text="Orden radial máx. Zernike\nStandard / ANSI:").grid(
+            row=3, column=0, sticky='w', padx=6, pady=3)
+        self.nmax_var = tk.StringVar(value='10')
+        ttk.Entry(frm_o, textvariable=self.nmax_var, width=7).grid(row=3, column=1, sticky='w')
+        ttk.Label(frm_o, text="(Fringe: siempre Z1–Z37)", foreground='gray').grid(
+            row=3, column=2, sticky='w', padx=6)
+
+        info = ("Se generan: rejilla Zemax Grid Sag (.dat), nube x,y,z para QUADOA (.csv),\n"
+                "coeficientes Zernike Fringe, Standard/Noll y ANSI (.txt) y un LEEME con\n"
+                "los convenios y cómo importarlos.")
+        ttk.Label(self, text=info, foreground='gray', justify='left').grid(
+            row=2, column=0, sticky='w', padx=10, pady=(2, 4))
+        if exp.get('quantity') != 'sag':
+            ttk.Label(self, text="⚠ Magnitud «normal u·n»: Zemax y QUADOA suman la deformación a la\n"
+                                 "sagita (eje z); en superficies curvas usa «cambio de sag».",
+                      foreground='#b06000', justify='left').grid(row=3, column=0, sticky='w',
+                                                                 padx=10, pady=(0, 4))
+
+        frm_b = ttk.Frame(self)
+        frm_b.grid(row=4, column=0, pady=8)
+        ttk.Button(frm_b, text="💾  Exportar…", command=self._export).grid(row=0, column=0, padx=4)
+        ttk.Button(frm_b, text="Cerrar", command=self.destroy).grid(row=0, column=1, padx=4)
+
+    def _export(self):
+        import fem_mirror_analysis as m
+        exp = self.exp
+        try:
+            n = int(self.n_var.get())
+            nmax = int(self.nmax_var.get())
+            if n < 5 or not 1 <= nmax <= 20:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Valor no válido",
+                                 "Puntos de rejilla: entero ≥ 5.\nOrden radial: entero 1–20.",
+                                 parent=self)
+            return
+        surf = self.surf_var.get()
+        values = exp['res'] if (surf == 'residuo' and exp.get('res') is not None) else exp['un']
+        fname = exp.get('fname') or 'superficie'
+        base = os.path.splitext(os.path.basename(fname))[0]
+        if exp.get('case') is not None:
+            base += f"_caso{exp['case']:g}"
+        base += '_residuo' if surf == 'residuo' else ''
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Ruta base de los ficheros exportados",
+            initialdir=os.path.dirname(fname) or None, initialfile=base,
+            filetypes=[("Todos los ficheros", "*.*")])
+        if not path:
+            return
+        path = os.path.splitext(path)[0] if os.path.splitext(path)[1].lower() in (
+            '.dat', '.csv', '.txt') else path
+        self.configure(cursor='watch')
+        self.update_idletasks()
+        try:
+            out = m.export_optical(
+                exp['xy'], values, exp['w'], exp['geom'], path, units=exp['units'],
+                lens_units=self.lu_var.get(), n_grid=n,
+                interp='cubic' if self.interp_var.get() == 'cúbica' else 'linear',
+                n_max=nmax, surface=surf, quantity=exp['quantity'],
+                source=os.path.basename(fname) + (f" · caso {exp['case']:g}"
+                                                  if exp.get('case') is not None else ''),
+                frame=exp['frame'])
+        except Exception:
+            messagebox.showerror("Error al exportar", traceback.format_exc(), parent=self)
+            return
+        finally:
+            self.configure(cursor='')
+        log = self.app._log
+        log(f"\n🔭 Exportación a Zemax / QUADOA ({m.EXPORT_SURFACES[surf]}):\n")
+        for ln in out['lines']:
+            log(f"  {ln}\n")
+        for p in out['files']:
+            log(f"  → {p}\n")
+        messagebox.showinfo("Exportación completada",
+                            f"{len(out['files'])} ficheros guardados en:\n{os.path.dirname(path)}\n\n"
+                            "Lee el fichero *_LEEME_exportacion.txt antes de importarlos.",
+                            parent=self)
+
 
 class CombineDialog(tk.Toplevel):
     """

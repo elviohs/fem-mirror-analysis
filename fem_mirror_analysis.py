@@ -125,6 +125,11 @@ python fem_mirror_analysis.py RESULTADOS.TXT --nterms 4 --wavelength 1000 \\
 python fem_mirror_analysis.py --gravity g0.TXT 0 --gravity g45.TXT 45 \\
     --elevation 60 --sweep 0 90 15 --save-combined g60.TXT
 
+# Exportar a Zemax (Grid Sag) y QUADOA (CSV) + Zernike, en mm, el residuo
+# tras quitar pistón, tilts y desenfoque
+python fem_mirror_analysis.py RESULTADOS.TXT --units m --nterms 4 \\
+    --export salida/espejo --export-surface residuo --export-units mm
+
 # Listar términos
 python fem_mirror_analysis.py --list-terms --convention noll
 
@@ -136,6 +141,7 @@ numpy, scipy, matplotlib
 
 import argparse
 import math
+import os
 import sys
 
 import numpy as np
@@ -2022,6 +2028,407 @@ def optics_summary(un_ap, w, coords, geom, xy_ap, units='mm', wavelength_nm=632.
             'wavelength': wavelength_nm, 'incidence': incidence_deg, 'spec': iso_spec}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EXPORTACIÓN A ZEMAX OPTICSTUDIO Y QUADOA OPTICAL CAD
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Se exporta la deformación de la superficie (en la apertura) en dos formas:
+#
+#  1. Rejilla de sag regular
+#     · Zemax «Grid Sag» (.DAT): cabecera «nx ny delx dely unitflag xdec ydec»
+#       y nx·ny líneas «z dz/dx dz/dy d²z/dxdy nodata», empezando en la
+#       esquina (−x, +y), de izquierda a derecha y bajando en y.  nodata = 1
+#       → OpticStudio usa sólo la sag base en ese punto.  Las derivadas se
+#       escriben a 0: OpticStudio las estima entonces por diferencias finitas.
+#       unitflag 0 = mm, 1 = cm, 2 = in, 3 = m.  Rejilla mínima 5×5.
+#       (Ayuda de OpticStudio citada por Zemax en community.zemax.com y
+#       artículo «How to use the Grid Sag surface type» de optics.ansys.com.)
+#     · QUADOA: fichero de texto tipo CSV con columnas x, y, z en unidades de
+#       longitud, igual que el «Export Pointcloud» de QUADOA (manual v26.10,
+#       §3.6.1.3).  El manual no documenta el formato de importación de la
+#       forma «Grid» ni del ajuste «Convert or Import Form»: se usa el mismo
+#       formato que QUADOA exporta.
+#
+#  2. Coeficientes de Zernike de sag (unidades de lente)
+#     · Fringe Z1..Z37, sin normalizar (A = 1): Zemax «Zernike Fringe Sag»
+#       (misma convención que Zygo/MetroPro) y QUADOA «Zernike Fringe»
+#       (manual §28.1.2, ec. 28.6).
+#     · ANSI Z80.28 / ISO 24157, Z0 = pistón, normalización RMS
+#       (∫Z²ρdρdφ = π): QUADOA «Zernike» (manual §28.1.1).
+#     · Noll (Z1 = pistón), normalización RMS: Zemax «Zernike Standard Sag».
+#       ⚠ Convención no comprobada en la ayuda de OpticStudio (requiere
+#       acceso de cliente): verificar con Analyze > Surface > Sag.
+#
+#  En todos los casos los polinomios se evalúan con x, y normalizadas al
+#  radio de normalización y centradas en el centro de la apertura;
+#  θ se mide desde +X hacia +Y; m > 0 → cos(mθ), m < 0 → sin(|m|θ).
+
+LENGTH_TO_MM = {'m': 1000.0, 'cm': 10.0, 'mm': 1.0, 'in': 25.4,
+                'µm': 1e-3, 'um': 1e-3, 'nm': 1e-6}
+ZEMAX_UNITFLAG = {'mm': 0, 'cm': 1, 'in': 2, 'm': 3}
+EXPORT_SURFACES = {'sin_rigido': 'superficie sin sólido rígido',
+                   'residuo': 'residuo tras el ajuste polinómico'}
+
+
+def length_factor(from_units, to_units):
+    """Factor de conversión entre unidades de longitud."""
+    return LENGTH_TO_MM[str(from_units).strip()] / LENGTH_TO_MM[str(to_units).strip()]
+
+
+def export_norm_radius(geom):
+    """Radio del círculo que circunscribe la apertura (normalización Zernike)."""
+    if geom['type'] == 'rectangular':
+        return math.hypot(geom['width'] / 2.0, geom['height'] / 2.0)
+    return float(geom['radius'])
+
+
+def export_half_extent(geom):
+    """Semiejes (hx, hy) del rectángulo que contiene la apertura."""
+    t = geom['type']
+    if t == 'rectangular':
+        return geom['width'] / 2.0, geom['height'] / 2.0
+    R = float(geom['radius'])
+    if t == 'hexagonal':
+        a = R * math.sqrt(3) / 2.0
+        return (R, a) if abs(geom.get('rotation', 0.0)) < 15 else (a, R)
+    return R, R
+
+
+def resample_to_grid(xy, values, geom, n=101, method='linear'):
+    """
+    Interpola valores nodales (dentro de la apertura) a una rejilla regular
+    de n×n puntos (n impar → el centro de la apertura es un nodo) que cubre
+    la apertura.  Fuera de la apertura → NaN.  Los puntos de la apertura que
+    caen fuera de la triangulación (borde de malla) se extrapolan con un
+    plano ajustado a los 8 nodos más próximos si el más cercano está a menos
+    de 2 separaciones de malla; si no, NaN.
+
+    method : 'linear' (sin sobreoscilaciones) | 'cubic' (C1, Clough–Tocher)
+
+    Devuelve xg (n,), yg (n,) — yg en orden DECRECIENTE (fila 0 = +y) — y
+    Z (n, n) con Z[i, j] en (xg[j], yg[i]).
+    """
+    import matplotlib.tri as mtri
+    from scipy.spatial import cKDTree
+    n = int(n)
+    if n < 5:
+        raise ValueError("La rejilla debe tener al menos 5×5 puntos.")
+    if n % 2 == 0:
+        n += 1
+    ok = np.isfinite(values)
+    xy, values = xy[ok], values[ok]
+    cx, cy = geom['center']
+    hx, hy = export_half_extent(geom)
+    xg = cx + np.linspace(-hx, hx, n)
+    yg = cy + np.linspace(hy, -hy, n)
+    X, Y = np.meshgrid(xg, yg)
+    tri = plot_triangulation(xy[:, 0], xy[:, 1])
+    if method == 'cubic':
+        interp = mtri.CubicTriInterpolator(tri, values, kind='geom')
+    elif method == 'linear':
+        interp = mtri.LinearTriInterpolator(tri, values)
+    else:
+        raise ValueError(f"Interpolación desconocida: {method}")
+    Zm = interp(X, Y)
+    Z = np.where(np.ma.getmaskarray(Zm), np.nan, np.ma.getdata(Zm)).astype(float)
+    P = np.column_stack([X.ravel(), Y.ravel()])
+    inside = aperture_mask_points(P, geom).reshape(X.shape)
+    gap = inside & ~np.isfinite(Z)
+    if gap.any():
+        sp = _local_spacing(xy)
+        d_nn = float(np.median(sp[np.isfinite(sp)]))
+        Pg = P[gap.ravel()]
+        kk = min(8, len(xy))
+        d, k = cKDTree(xy).query(Pg, k=kk)
+        fill = np.full(len(Pg), np.nan)
+        for i in np.flatnonzero(d[:, 0] <= 2.0 * d_nn):
+            q = xy[k[i]] - Pg[i]                 # plano local por los kk nodos
+            M = np.column_stack([np.ones(kk), q])
+            c, *_ = np.linalg.lstsq(M, values[k[i]], rcond=None)
+            fill[i] = c[0]
+        Z[gap] = fill
+    Z[~inside] = np.nan
+    return xg, yg, Z
+
+
+def write_zemax_grid_sag(fname, xg, yg, Z, center, lens_units='mm'):
+    """
+    Fichero Grid Sag de Zemax OpticStudio.  xg, yg, Z en unidades de lente;
+    yg decreciente (fila 0 = +y), como devuelve resample_to_grid.
+    La rejilla se centra en el centro de la apertura y se descentra
+    (xdec, ydec) respecto al vértice de la superficie base.
+    """
+    if lens_units not in ZEMAX_UNITFLAG:
+        raise ValueError(f"Unidades no admitidas por Zemax Grid Sag: {lens_units} "
+                         f"(admitidas: {', '.join(ZEMAX_UNITFLAG)})")
+    ny, nx = Z.shape
+    delx = (xg[-1] - xg[0]) / (nx - 1)
+    dely = (yg[0] - yg[-1]) / (ny - 1)
+    lines = [f"{nx:d} {ny:d} {delx:.10g} {dely:.10g} {ZEMAX_UNITFLAG[lens_units]:d} "
+             f"{center[0]:.10g} {center[1]:.10g}"]
+    for i in range(ny):                      # fila 0 = +y (arriba)
+        for j in range(nx):                  # de −x a +x
+            z = Z[i, j]
+            if np.isfinite(z):
+                lines.append(f"{z:.10e} 0 0 0 0")
+            else:
+                lines.append("0 0 0 0 1")
+    with open(fname, 'w', encoding='ascii', newline='\r\n') as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def write_quadoa_grid_csv(fname, xg, yg, Z, keep_nan=False):
+    """
+    Nube de puntos x, y, z (CSV, sin cabecera) en el mismo formato que el
+    «Export Pointcloud» de QUADOA.  Por defecto se omiten los puntos sin
+    dato (equivale a «Remove Nan Values»).
+    """
+    X, Y = np.meshgrid(xg, yg)
+    rows = []
+    for x, y, z in zip(X.ravel(), Y.ravel(), Z.ravel()):
+        if np.isfinite(z):
+            rows.append(f"{x:.10g},{y:.10g},{z:.10e}")
+        elif keep_nan:
+            rows.append(f"{x:.10g},{y:.10g},nan")
+    with open(fname, 'w', encoding='ascii', newline='\n') as f:
+        f.write("\n".join(rows) + "\n")
+
+
+def ansi2nm(j):
+    """(n, m) del índice ANSI Z80.28 / ISO 24157 j (0-based)."""
+    n = int(math.ceil((-3.0 + math.sqrt(9.0 + 8.0 * j)) / 2.0))
+    return n, 2 * j - n * (n + 2)
+
+
+def nm2ansi(n, m):
+    return (n * (n + 2) + m) // 2
+
+
+def zernike_export_sets(n_max=10):
+    """
+    Conjuntos de Zernike que se exportan: lista de dicts con
+    key, title, programs, index (etiquetas), nm [(n, m)], norm.
+    """
+    fr = [zernike_index_to_nm(t, 'fringe') for t in range(FRINGE_MAX_TERMS)]
+    nj = (n_max + 1) * (n_max + 2) // 2
+    noll = [zernike_noll2nm(j) for j in range(1, nj + 1)]
+    ansi = [ansi2nm(j) for j in range(nj)]
+    return [
+        {'key': 'fringe', 'title': 'Zernike Fringe (Z1–Z37, sin normalizar)',
+         'programs': 'Zemax «Zernike Fringe Sag» · QUADOA «Zernike Fringe»',
+         'index': list(range(1, FRINGE_MAX_TERMS + 1)), 'nm': fr, 'norm': 'pico'},
+        {'key': 'standard_noll', 'title': f'Zernike Standard / Noll (Z1–Z{nj}, normalización RMS)',
+         'programs': 'Zemax «Zernike Standard Sag»',
+         'index': list(range(1, nj + 1)), 'nm': noll, 'norm': 'rms'},
+        {'key': 'ansi', 'title': f'Zernike ANSI Z80.28 / ISO 24157 (Z0–Z{nj - 1}, normalización RMS)',
+         'programs': 'QUADOA «Zernike» (Sort Order ANSI/ISO)',
+         'index': list(range(nj)), 'nm': ansi, 'norm': 'rms'},
+    ]
+
+
+def fit_zernike_export(xy, values, weights, center, r_norm, nm, norm):
+    """Ajuste WLS de los Zernike (n, m) dados.  Devuelve coef, residuo."""
+    xc, yc = xy[:, 0] - center[0], xy[:, 1] - center[1]
+    r = np.hypot(xc, yc) / r_norm
+    th = np.arctan2(yc, xc)
+    A = np.column_stack([eval_zernike_term(n, m, r, th, norm) for n, m in nm])
+    c, fitted = _wfit(A, values, weights)
+    return c, values - fitted
+
+
+def write_zernike_file(fname, zset, coeffs, header_lines, lens_units):
+    """Tabla de coeficientes con cabecera de comentarios ('#')."""
+    lines = [f"# {ln}" if ln else "#" for ln in header_lines]
+    lines += ["#", f"# {zset['title']}", f"# Programas: {zset['programs']}", "#",
+              f"# {'Z':>4s}  {'n':>3s}  {'m':>4s}  {'coef [' + lens_units + ']':>20s}  descripción"]
+    for idx, (n, m), c in zip(zset['index'], zset['nm'], coeffs):
+        lines.append(f"{idx:6d}  {n:3d}  {m:+4d}  {c:20.10e}  {zernike_name(n, m)}")
+    with open(fname, 'w', encoding='utf-8', newline='\n') as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def export_optical(xy, values, weights, geom, out_base, units='mm', lens_units='mm',
+                   n_grid=101, interp='linear', n_max=10, surface='sin_rigido',
+                   quantity='sag', source='', frame='global'):
+    """
+    Exporta la superficie a Zemax y QUADOA.
+
+    xy, values, weights : nodos de la apertura, valor a exportar (unidades del
+                          fichero) y pesos (áreas nodales)
+    out_base   : ruta base; se añaden sufijos y extensiones
+    units      : unidades del fichero FEM (coordenadas y desplazamientos)
+    lens_units : unidades de lente del fichero exportado ('mm', 'cm', 'in', 'm')
+
+    Devuelve dict con 'files' (lista de rutas) y 'lines' (resumen).
+    """
+    import datetime
+    f = length_factor(units, lens_units)
+    xy_l = np.asarray(xy, float) * f
+    v_l = np.asarray(values, float) * f
+    w = np.asarray(weights, float)
+    ok = np.isfinite(v_l) & np.isfinite(w)
+    xy_l, v_l, w = xy_l[ok], v_l[ok], w[ok] / w[ok].sum()
+    g = dict(geom)
+    g['center'] = (geom['center'][0] * f, geom['center'][1] * f)
+    for k in ('radius', 'inner_radius', 'width', 'height'):
+        if k in g and g[k] is not None:
+            g[k] = g[k] * f
+    center, rn = g['center'], export_norm_radius(g)
+
+    d = os.path.dirname(out_base)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    head = [f"mirror-surface-deformation · exportación {stamp}",
+            f"Origen: {source or '—'}",
+            f"Superficie: {EXPORT_SURFACES.get(surface, surface)}; magnitud: "
+            f"{'cambio de sag Δz' if quantity == 'sag' else 'desplazamiento normal u·n'}; "
+            f"sistema: {frame}",
+            f"Apertura {geom['type']}: {describe_geometry(g)} [{lens_units}]",
+            f"Unidades de lente: {lens_units}  (fichero FEM en {units})",
+            f"Radio de normalización: {rn:.10g} {lens_units}",
+            f"Centro de normalización (x0, y0): ({center[0]:.10g}, {center[1]:.10g}) {lens_units}",
+            f"Nodos: {len(v_l)};  RMS (pond. por área) = {_wrms(v_l, w):.6e};  "
+            f"PV = {peak_to_valley(v_l):.6e} {lens_units}"]
+    files, lines = [], []
+
+    # ── Rejilla de sag ──────────────────────────────────────────────────────
+    xg, yg, Z = resample_to_grid(xy_l, v_l, g, n_grid, interp)
+    fz = out_base + '_zemax_gridsag.dat'
+    write_zemax_grid_sag(fz, xg, yg, Z, center, lens_units)
+    fq = out_base + '_quadoa_grid.csv'
+    write_quadoa_grid_csv(fq, xg, yg, Z)
+    files += [fz, fq]
+    valid = np.isfinite(Z)
+    ny, nx = Z.shape
+    lines.append(f"Rejilla {nx}×{ny}, paso {xg[1] - xg[0]:.6g} × {yg[0] - yg[1]:.6g} {lens_units} "
+                 f"({interp}); {valid.sum()} puntos con dato, {(~valid).sum()} sin dato.")
+    Xg, Yg = np.meshgrid(xg, yg)
+    n_hole = int((aperture_mask_points(np.column_stack([Xg.ravel(), Yg.ravel()]), g)
+                  .reshape(Z.shape) & ~valid).sum())
+    if n_hole:
+        lines.append(f"  ⚠ {n_hole} puntos dentro de la apertura sin dato (lejos de la malla): "
+                     f"en ellos Zemax usa sólo la sag base.")
+    lines.append(f"  Rejilla: RMS = {np.sqrt(np.mean(Z[valid] ** 2)):.6e}, "
+                 f"PV = {np.ptp(Z[valid]):.6e} {lens_units}  (sin ponderar)")
+
+    # ── Coeficientes de Zernike ─────────────────────────────────────────────
+    summary = []
+    for zs in zernike_export_sets(n_max):
+        c, res = fit_zernike_export(xy_l, v_l, w, center, rn, zs['nm'], zs['norm'])
+        recon = v_l - res
+        info = head + [
+            f"Ajuste WLS (pesos = áreas nodales) sobre {len(v_l)} nodos:",
+            f"  RMS residuo no representado = {_wrms(res, w):.6e} {lens_units}",
+            f"  Superficie reconstruida: RMS = {_wrms(recon, w):.6e}, "
+            f"PV = {peak_to_valley(recon):.6e} {lens_units}",
+            "Polinomios en ρ = r / radio de normalización, θ desde +X hacia +Y;",
+            "m > 0 → cos(mθ), m < 0 → sin(|m|θ).  Coeficientes = sag en unidades de lente."]
+        fn = out_base + f"_zernike_{zs['key']}.txt"
+        write_zernike_file(fn, zs, c, info, lens_units)
+        files.append(fn)
+        summary.append((zs['key'], len(c), _wrms(res, w)))
+        lines.append(f"{zs['title']}: RMS residuo = {_wrms(res, w):.4e} {lens_units}")
+
+    # ── Fichero de información ──────────────────────────────────────────────
+    fi = out_base + '_LEEME_exportacion.txt'
+    _write_export_readme(fi, head, files, lens_units, center, rn, geom, quantity, n_max)
+    files.append(fi)
+    if geom['type'] != 'circular':
+        lines.append("⚠ Apertura no circular: los Zernike se ajustan sobre el círculo "
+                     "circunscrito (fuera de la apertura son una extrapolación).")
+    if quantity != 'sag':
+        lines.append("⚠ Magnitud «normal u·n»: Grid Sag y los Zernike de sag de Zemax/QUADOA "
+                     "se suman a la sagita (eje z); para superficies curvas usa «cambio de sag».")
+    return {'files': files, 'lines': lines, 'grid': (xg, yg, Z), 'summary': summary}
+
+
+def _write_export_readme(fname, head, files, lens_units, center, rn, geom, quantity, n_max):
+    base = [os.path.basename(p) for p in files]
+    flag = ZEMAX_UNITFLAG.get(lens_units)
+    txt = head + [
+        "",
+        "FICHEROS",
+        f"  {base[0]}",
+        "    Zemax OpticStudio, superficie «Grid Sag».  Formato: cabecera",
+        "    «nx ny delx dely unitflag xdec ydec» y nx·ny líneas",
+        "    «z dz/dx dz/dy d2z/dxdy nodata», empezando en la esquina (−x, +y).",
+        f"    unitflag = {flag} ({lens_units}).  xdec, ydec = centro de la apertura respecto",
+        "    al vértice de la superficie.  Derivadas = 0 → OpticStudio las estima por",
+        "    diferencias finitas.  nodata = 1 fuera de la apertura (sólo sag base).",
+        "    Uso: Lens Data Editor → superficie tipo Grid Sag → Surface Properties →",
+        "    Import → seleccionar el .DAT (copiarlo antes a {Zemax}\\Objects\\Grid Files).",
+        "    La sag de la rejilla se SUMA a la sag base (radio, cónica) de la superficie:",
+        "    deja en ella la prescripción nominal del espejo.",
+        f"  {base[1]}",
+        "    QUADOA: nube de puntos x, y, z (CSV, sin cabecera, unidades de lente), mismo",
+        "    formato que «Export Pointcloud» de QUADOA, en la rejilla regular anterior.",
+        "    Para la forma «Grid» o «Convert or Import Form → fit … to imported data».",
+        "    ⚠ El manual de QUADOA v26.10 no documenta el formato de importación: si no lo",
+        "    acepta, consulta a soporte de QUADOA o usa los coeficientes de Zernike.",
+        f"  {base[2]}",
+        "    Zernike Fringe Z1..Z37 sin normalizar (A = 1, convención Zygo/MetroPro).",
+        "    Zemax «Zernike Fringe Sag» y QUADOA «Zernike Fringe»: Norm Radius = radio de",
+        "    normalización; coeficientes en unidades de lente (no en ondas).",
+        "    Nota: la tabla 28.2 del manual de QUADOA pone Z2 = 2x, Z3 = 2y, en contra de",
+        "    su propia definición (A = 1 → Z2 = x, Z3 = y); sólo afecta al tilt.",
+        f"  {base[3]}",
+        f"    Zernike Standard (orden de Noll, normalización RMS) hasta n = {n_max}.",
+        "    Zemax «Zernike Standard Sag»: Norm Radius = radio de normalización.",
+        "    ⚠ Convención no comprobada en la ayuda de OpticStudio (acceso restringido).",
+        "    Verifica: Analyze → Surface → Sag sobre la superficie Zernike (radio y cónica",
+        "    a 0) debe dar el mismo RMS/PV que «Superficie reconstruida» en el fichero.",
+        f"  {base[4]}",
+        f"    Zernike ANSI Z80.28 / ISO 24157 (Z0 = pistón, normalización RMS) hasta n = {n_max}.",
+        "    QUADOA «Zernike» con Sort Order ANSI/ISO; Polynomial Order = n máximo.",
+        "    ⚠ El manual (§9.2.1) nombra las columnas de coeficientes «Z2…Zn» con ID z1…zn;",
+        "    comprueba en el editor si la primera columna es Z0 (pistón) o Z1.",
+        "",
+        "CONVENIOS COMUNES",
+        f"  Centro de normalización (x0, y0) = ({center[0]:.10g}, {center[1]:.10g}) {lens_units}.",
+        "  Si no es (0, 0), descentra los Zernike: en Zemax con los parámetros de",
+        "  descentramiento del Zernike de la superficie; en QUADOA con la posición de la",
+        "  superficie.  θ se mide desde +X hacia +Y en el sistema de coordenadas del",
+        "  modelo FEM; comprueba que coincide con el sistema local de la superficie en el",
+        "  programa óptico (orientación de X, Y y sentido de +Z).",
+        "  Las magnitudes son deformación de SUPERFICIE (sag), no frente de onda.",
+    ]
+    if geom['type'] != 'circular':
+        txt += ["  Apertura no circular: los Zernike se ajustan con el círculo circunscrito como",
+                "  radio de normalización; fuera de la apertura real son una extrapolación."]
+    if quantity != 'sag':
+        txt += ["  ⚠ Se ha exportado el desplazamiento normal u·n: Grid Sag y Zernike de sag se",
+                "  suman a la sagita (eje z).  En superficies curvas usa «cambio de sag»."]
+    with open(fname, 'w', encoding='utf-8', newline='\n') as f:
+        f.write("\n".join(txt) + "\n")
+
+
+def _cli_export(args, coor, un, an, mask, geom, residual):
+    if args.export_surface == 'residuo':
+        if residual is None or not residual.size:
+            print("\n  ⚠  Exportación: no hay residuo (sin ajuste polinómico); "
+                  "se exporta la superficie sin sólido rígido.")
+            values, surf = un[mask], 'sin_rigido'
+        else:
+            values, surf = residual, 'residuo'
+    else:
+        values, surf = un[mask], 'sin_rigido'
+    try:
+        out = export_optical(coor[mask, :2], values, an[mask], geom, args.export,
+                             units=args.units, lens_units=args.export_units,
+                             n_grid=args.export_grid, interp=args.export_interp,
+                             n_max=args.export_nmax, surface=surf, quantity=args.quantity,
+                             source=os.path.basename(args.fname or 'combinación'),
+                             frame=args.frame)
+    except (KeyError, ValueError) as e:
+        print(f"\n  ⚠  Exportación a Zemax/QUADOA: {e}")
+        return
+    print(f"\n  ── Exportación a Zemax / QUADOA ({EXPORT_SURFACES[surf]}) ──")
+    print("\n".join("  " + ln for ln in out['lines']))
+    for p in out['files']:
+        print(f"    → {p}")
+
+
 def _ap_index(x, y, xy_ap):
     from scipy.spatial import cKDTree
     return cKDTree(np.column_stack([x, y])).query(xy_ap)[1]
@@ -2140,6 +2547,22 @@ def main():
                         "\"3/900 nm (250 nm/100 nm) RMSi < 30 nm\"")
     g.add_argument("--no-optics", action="store_true",
                    help="Omitir Strehl, PSF y magnitudes ISO 10110-5")
+    e = parser.add_argument_group("Exportación a Zemax OpticStudio y QUADOA")
+    e.add_argument("--export", default=None, metavar="RUTA_BASE",
+                   help="Exportar rejilla de sag (Zemax Grid Sag .DAT y CSV x,y,z para QUADOA) y "
+                        "coeficientes de Zernike (Fringe, Standard/Noll, ANSI).  Se añaden "
+                        "sufijos a RUTA_BASE.")
+    e.add_argument("--export-surface", choices=list(EXPORT_SURFACES), default="sin_rigido",
+                   help="Superficie a exportar: sin sólido rígido o residuo tras el ajuste. "
+                        "Default: sin_rigido")
+    e.add_argument("--export-units", choices=list(ZEMAX_UNITFLAG), default="mm",
+                   help="Unidades de lente del fichero exportado.  Default: mm")
+    e.add_argument("--export-grid", type=int, default=101,
+                   help="Puntos de la rejilla por lado (impar, ≥ 5).  Default: 101")
+    e.add_argument("--export-interp", choices=["linear", "cubic"], default="linear",
+                   help="Interpolación nodos → rejilla.  Default: linear")
+    e.add_argument("--export-nmax", type=int, default=10,
+                   help="Orden radial máximo de los Zernike Standard/ANSI.  Default: 10 (66 términos)")
     c = parser.add_argument_group(
         "Combinación de casos (en lugar de FNAME)",
         "FICHERO admite «ruta::caso» para ficheros con varios casos apilados.")
@@ -2275,7 +2698,7 @@ def main():
     mask = np.zeros(len(coor), dtype=bool)
     residual = np.array([])
     geom = coords = None
-    if not (args.no_zernike and args.no_optics):
+    if not (args.no_zernike and args.no_optics) or args.export:
         try:
             mask, coords, geom = apply_aperture(coor[:, :2], un, an, args.aperture, **ap_kw)
         except ValueError as e:
@@ -2317,6 +2740,10 @@ def main():
 
     if not args.no_optics and mask.any():
         _cli_optics(args, coor, un, an, mask, coords, geom,
+                    residual if (not args.no_zernike and residual.size) else None)
+
+    if args.export and mask.any():
+        _cli_export(args, coor, un, an, mask, geom,
                     residual if (not args.no_zernike and residual.size) else None)
 
     print(f"\n{'═'*60}\n")

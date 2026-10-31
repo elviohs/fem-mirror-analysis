@@ -42,6 +42,15 @@ REM Tolerancia ISO 10110-5 a comprobar (vacio = no comprobar), p. ej.:
 REM set "ISO=3/900 nm (250 nm/100 nm) RMSi < 30 nm"
 set "ISO="
 
+REM Exportacion a Zemax (Grid Sag .dat) y QUADOA (CSV x,y,z) + coeficientes Zernike.
+REM Ruta base de los ficheros (vacio = no exportar), p. ej.:
+REM set "EXPORTAR=resultados\espejo"
+set "EXPORTAR="
+REM Superficie a exportar: sin_rigido o residuo (tras el ajuste)
+set EXP_SUPERFICIE=sin_rigido
+REM Unidades de lente del fichero exportado: mm, cm, in o m
+set EXP_UNIDADES=mm
+
 REM Si el fichero tiene varios casos de carga apilados, anade:  --case N
 REM Combinacion de casos de gravedad (en lugar de DATOS), p. ej.:
 REM   --gravity g0.TXT 0 --gravity g45.TXT 45 --elevation 60 --sweep 0 90 15
@@ -60,6 +69,9 @@ python "%~dp0fem_mirror_analysis.py" %DATOS% ^
     --wavelength %LAMBDA% ^
     --incidence %INCIDENCIA% ^
     --iso-spec "%ISO%" ^
+    --export "%EXPORTAR%" ^
+    --export-surface %EXP_SUPERFICIE% ^
+    --export-units %EXP_UNIDADES% ^
     --plot
 
 pause

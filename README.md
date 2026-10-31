@@ -22,6 +22,7 @@
 - **Calidad óptica**: error de frente de onda en reflexión (2·cosθ·superficie) con λ y ángulo de incidencia configurables, **Strehl** por Maréchal y numérico, y **PSF** por FFT en unidades de λ/D
 - **ISO 10110-5:2015**: potencia (A), irregularidad (B), irregularidad rotacionalmente invariante (C), RMSt, RMSi, RMSa, PV robusto (PVr) y PV recortado (PV99.8%), notación `3/A(B/C) RMSx < D` y comprobación frente a una tolerancia
 - **Combinación de casos de carga** calculados con la misma malla: gravedad a cualquier ángulo de elevación a partir de casos a ángulos distintos, u(θ) = cosθ·A + sinθ·B (+C), con comprobación de linealidad y barrido de RMS/PV; o combinación lineal Σ cₖ·uₖ
+- **Exportación a Zemax OpticStudio y QUADOA**: rejilla de sag (Zemax *Grid Sag* `.dat` y nube x, y, z `.csv` para QUADOA) y coeficientes de Zernike de sag en unidades de lente (Fringe Z1–Z37, Standard/Noll y ANSI Z80.28), de la superficie sin sólido rígido o del residuo tras el ajuste
 - **Vista 3D interactiva** de la superficie de deformación con escala Z configurable
 - **Informe Word** (español o inglés) con los mapas de la superficie sin sólido rígido y del residuo, RMS, máximo, mínimo, PV, términos eliminados, calidad óptica, tabla ISO 10110-5 y observaciones automáticas
 - Coordenadas + valor interpolado al pasar el ratón por encima de los gráficos
@@ -62,6 +63,8 @@ python gui_fem_mirror.py
 
 La GUI permite cargar el fichero de datos FEM, configurar los parámetros y ejecutar el análisis con un clic. En el bloque **Calidad óptica e ISO 10110-5** se indican las unidades del fichero, la longitud de onda, el ángulo de incidencia y, opcionalmente, una tolerancia ISO a comprobar. Tras el análisis, el botón 🎨 **Vista 3D** abre una ventana interactiva con la superficie de deformación, y el botón 📄 **Generar informe** crea un documento Word en el idioma seleccionado.
 
+El botón 🔭 **Exportar Zemax / QUADOA…** abre una ventana para elegir la superficie (sin sólido rígido, por defecto, o residuo tras el ajuste), las unidades de lente, la resolución de la rejilla, la interpolación y el orden de los Zernike; ver [Exportación a Zemax y QUADOA](#exportación-a-zemax-y-quadoa).
+
 El botón **Combinar casos…** abre una ventana para combinar casos FEM con la misma malla (por ejemplo gravedad a 0° y 45°): genera el fichero del caso combinado a un ángulo dado (absoluto o respecto a un ángulo de referencia), lo analiza con los ajustes de la ventana principal y dibuja el barrido de RMS/PV frente al ángulo.
 
 ### Modo consola
@@ -95,6 +98,14 @@ python fem_mirror_analysis.py --gravity g0.TXT 0 --gravity g45.TXT 45 \
 ```
 
 Con tres o más casos, `--constant` añade un término constante (precargas, montaje) y el programa informa del desajuste de linealidad de cada caso. `--combine FICHERO COEF` (repetible) calcula una combinación lineal.
+
+Exportación a Zemax y QUADOA (aquí, el residuo tras quitar pistón, tilts y desenfoque, en mm):
+
+```bash
+python fem_mirror_analysis.py datos.TXT --units m --nterms 4 \
+    --export salida/espejo --export-surface residuo --export-units mm \
+    --export-grid 101 --export-interp linear --export-nmax 10
+```
 
 ## Conceptos
 
@@ -131,6 +142,30 @@ La normalización solo cambia el valor de los coeficientes: el residuo, su RMS y
 - PVr acotado entre 6·RMS del residuo y el PV, y PV99.8% (PV recortado del 99,8 % del área, recorte óptimo de las dos colas) según Murphy (Proc. SPIE 12778, 2023), para f_WD y f_WI. La comprobación de tolerancias muestra también B y PV evaluados con PV99.8%, que la revisión de ISO 10110-5 en preparación prevé admitir por defecto.
 - La norma define la desviación de forma normal a la superficie; con «cambio de sag» los valores son desviación de sagita ΔZ. En espejos planos coinciden.
 - No se evalúan las formas cilíndricas/tóricas (AX;AY, CX;CY), las pendientes ΔS con longitud de muestreo, los campos de prueba «(all …)» ni las tolerancias de coeficientes Z(n,m).
+
+## Exportación a Zemax y QUADOA
+
+Se exporta la superficie dentro de la apertura: por defecto **sin sólido rígido** (los modos marcados), u opcionalmente el **residuo tras el ajuste** polinómico. Se generan, con la ruta base elegida:
+
+| Fichero | Contenido | Uso |
+|---|---|---|
+| `*_zemax_gridsag.dat` | Rejilla regular de sag | Zemax OpticStudio, superficie *Grid Sag* |
+| `*_quadoa_grid.csv` | Nube x, y, z en la misma rejilla | QUADOA, forma *Grid* o *Convert or Import Form* |
+| `*_zernike_fringe.txt` | Zernike Fringe Z1–Z37 sin normalizar | Zemax *Zernike Fringe Sag* y QUADOA *Zernike Fringe* |
+| `*_zernike_standard_noll.txt` | Zernike orden de Noll, normalización RMS | Zemax *Zernike Standard Sag* |
+| `*_zernike_ansi.txt` | Zernike ANSI Z80.28 / ISO 24157 (Z0 = pistón), normalización RMS | QUADOA *Zernike* (Sort Order ANSI/ISO) |
+| `*_LEEME_exportacion.txt` | Convenios, radio y centro de normalización, calidad de los ajustes e instrucciones | — |
+
+- **Grid Sag (Zemax)**: cabecera `nx ny delx dely unitflag xdec ydec` y una línea `z dz/dx dz/dy d2z/dxdy nodata` por punto, empezando en la esquina (−x, +y). La rejilla se centra en el centro de la apertura y `xdec, ydec` la sitúan respecto al vértice de la superficie. Las derivadas se escriben a 0 (OpticStudio las estima por diferencias finitas) y los puntos fuera de la apertura llevan `nodata = 1`. La sag de la rejilla se **suma** a la de la superficie base: deja en ella el radio y la cónica nominales.
+- **Interpolación** nodos → rejilla lineal (sin sobreoscilaciones) o cúbica (C1) sobre la triangulación de la malla, sin puentear huecos; los puntos de borde fuera de la triangulación se extrapolan con un plano local.
+- **Zernike**: ajuste WLS ponderado por área sobre los nodos, con el radio de normalización igual al del círculo que circunscribe la apertura (radio, circunradio del hexágono o semidiagonal del rectángulo) y centrado en el centro de la apertura; θ desde +X hacia +Y, m > 0 → cos mθ, m < 0 → sin |m|θ. Cada fichero indica el RMS no representado por los polinomios y el RMS/PV de la superficie reconstruida, para comprobar la importación (Zemax: *Analyze → Surface → Sag*). En aperturas no circulares los Zernike fuera de la apertura son una extrapolación: para ellas es preferible la rejilla.
+- Se exporta deformación de **superficie** (sag), no frente de onda. Grid Sag y los Zernike de sag se suman a la sagita (eje z): en espejos curvos usa «cambio de sag».
+
+Comprobado y pendiente de comprobar:
+
+- El formato *Grid Sag* procede de la ayuda de OpticStudio (citada por Zemax en su foro y en el artículo *How to use the Grid Sag surface type*). Que los coeficientes de *Zernike Fringe Sag* van en unidades de lente y siguen la convención de Zygo/MetroPro lo confirma Zemax en su foro.
+- Los polinomios y la ordenación de QUADOA (ANSI y Fringe) proceden del manual de QUADOA v26.10 (cap. 28). El manual no documenta el formato de importación de la forma *Grid*: el CSV usa el mismo formato que el *Export Pointcloud* de QUADOA.
+- La convención de *Zernike Standard Sag* (orden de Noll, normalización RMS) no se ha podido contrastar con la ayuda de OpticStudio (acceso restringido): conviene verificarla con un término.
 
 ## Formato del fichero de datos
 
@@ -180,6 +215,12 @@ Métricas de forma (PV robusto y PV recortado):
 - C. J. Evans, "PVr—a robust amplitude parameter for optical surface specification," Opt. Eng. 48(4), 043605 (2009).
 - P. E. Murphy, "Updating the peak-to-valley (PV) irregularity specification for the modern world," Proc. SPIE 12778, Optifab 2023 (2023).
 - M. Schake, G. Ehret, "Measurement uncertainty for common surface form metrics," Metrologia 63, 055007 (2026). doi:10.1088/1681-7575/ae9bc9
+
+Formatos de exportación:
+
+- Ansys Zemax OpticStudio, *User Manual*: superficies Grid Sag, Zernike Fringe Sag y Zernike Standard Sag; Ansys Optics, «How to use the Grid Sag surface type» (optics.ansys.com).
+- QUADOA Optical CAD, *User Manual* v26.10: §3.6.1.3 (Export Pointcloud), §9.1.22 (Grid), §9.2 (Zernike y Zernike Fringe) y cap. 28 (polinomios).
+- ANSI Z80.28 / ISO 24157:2008, *Ophthalmic optics and instruments — Reporting aberrations of the human eye* (ordenación y normalización ANSI de los Zernike).
 
 Documentación de software consultada para contrastar métodos: SurfCalc (guía de usuario, módulo Surface Deformation), SigFit (Sigmadyne), prysm y POPPY.
 
