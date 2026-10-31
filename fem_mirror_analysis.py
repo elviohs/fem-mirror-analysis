@@ -45,7 +45,7 @@ FLUJO DE TRABAJO
      sag    : cambio de sag Δz = (u·n̂)/n_z  (por defecto).  Incluye el efecto
               del movimiento en el plano en superficies curvas, como
               recomiendan Doyle, Genberg, Michels et al. (SPIE 5867, 2005).
-     normal : desplazamiento normal u·n̂ (MATLAB original, 'nd' de SurfCalc).
+     normal : desplazamiento normal u·n̂ (MATLAB original).
    En espejos planos ambos coinciden.
 6. Ajuste polinómico WLS (ponderado por área proyectada) sobre la apertura:
      circular     → Zernike, convención Fringe o Noll
@@ -694,8 +694,7 @@ def extract_rigid(coor, disp, rigidmodes=(0, 0, 1, 0, 0, 0),
     Elimina el movimiento de sólido rígido y devuelve el error de superficie
     residual.  Traducción de extract_rigid.m (IAC), ampliada.
 
-    quantity : 'normal' → desplazamiento normal  u·n̂  (como el MATLAB y el
-                          'nd' de SurfCalc)
+    quantity : 'normal' → desplazamiento normal  u·n̂  (como el MATLAB)
                'sag'    → cambio de sag lineal medido a lo largo de Z en la
                           misma posición (x, y):  Δs = u_z − ∇f·u_xy.
                           Con n̂ = (−f_x, −f_y, 1)/√(1+|∇f|²) resulta
@@ -2079,7 +2078,7 @@ def main():
         "--quantity", choices=QUANTITIES, default="sag",
         help="Error de superficie: 'sag' (cambio de sag Δz, incluye el efecto "
              "del movimiento en el plano; recomendado) o 'normal' (u·n̂, como el "
-             "MATLAB original y el 'nd' de SurfCalc).  En espejos planos coinciden. "
+             "MATLAB original).  En espejos planos coinciden. "
              "Default: sag")
     parser.add_argument(
         "--aperture", choices=list(APERTURE_BASIS), default="circular",

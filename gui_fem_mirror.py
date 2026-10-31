@@ -490,7 +490,7 @@ class App(tk.Tk):
         ttk.Radiobutton(frm_rigid, text='Cambio de sag Δz (recomendado)',
                         variable=self.quantity_var, value='sag').grid(
             row=1, column=3, columnspan=4, padx=4, pady=(0, 6), sticky='w')
-        ttk.Radiobutton(frm_rigid, text='Normal u·n (SurfCalc «nd»)',
+        ttk.Radiobutton(frm_rigid, text='Normal u·n',
                         variable=self.quantity_var, value='normal').grid(
             row=1, column=7, columnspan=3, padx=4, pady=(0, 6), sticky='w')
 
