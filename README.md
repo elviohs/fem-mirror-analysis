@@ -7,7 +7,7 @@
 - **Interfaz gráfica** (GUI tkinter) con paneles de configuración, log de resultados y figura embebida
 - **Modo consola** para integración en flujos de trabajo automatizados
 - Eliminación de modos de **sólido rígido** (Tx, Ty, Tz, Rx, Ry, Rz) configurables
-- **Ajuste polinómico WLS ponderado por área** (como SurfCalc), normalización pico o RMS, con tabla de coeficientes e índice SurfCalc equivalente
+- **Ajuste polinómico WLS ponderado por área**, normalización pico o RMS, con tabla de coeficientes e índice 1-based de la convención
 - **Aperturas y bases**:
   - circular → Zernike, convención **Fringe** o **Noll**
   - anular → **Zernike anulares de Mahajan** (1981), con obscuración detectada de la malla
@@ -221,8 +221,6 @@ Formatos de exportación:
 - Ansys Zemax OpticStudio, *User Manual*: superficies Grid Sag, Zernike Fringe Sag y Zernike Standard Sag; Ansys Optics, «How to use the Grid Sag surface type» (optics.ansys.com).
 - QUADOA Optical CAD, *User Manual* v26.10: §3.6.1.3 (Export Pointcloud), §9.1.22 (Grid), §9.2 (Zernike y Zernike Fringe) y cap. 28 (polinomios).
 - ANSI Z80.28 / ISO 24157:2008, *Ophthalmic optics and instruments — Reporting aberrations of the human eye* (ordenación y normalización ANSI de los Zernike).
-
-Documentación de software consultada para contrastar métodos: SurfCalc (guía de usuario, módulo Surface Deformation), SigFit (Sigmadyne), prysm y POPPY.
 
 ## Origen
 

@@ -32,9 +32,8 @@ FLUJO DE TRABAJO
 1. Leer la nube de puntos FEM.
 2. Sistema de referencia (--frame):
      global  : Z del fichero = eje óptico (por defecto, como el MATLAB).
-     bestfit : girar a la normal del plano best-fit (SVD), equivalente a
-               SurfCalc "Best-fit Plane (Auto)".  Útil si el espejo plano
-               está exportado inclinado.  NO usar en modelos parciales de
+     bestfit : girar a la normal del plano best-fit (SVD).  Útil si el espejo
+               plano está exportado inclinado.  NO usar en modelos parciales de
                espejos curvos ni en segmentos fuera de eje.
    Para un espejo plano exportado con Z = eje óptico ambos coinciden.
 3. Triangulación de Delaunay → áreas nodales (proyectadas en la pupila) y
@@ -79,7 +78,7 @@ Noll (--convention noll).  Índices 1-based estándar (Noll 1976):
   Z6 astig. 0°/90° · Z7/Z8 coma · Z9/Z10 trébol · Z11 esférica · ...
 
 ¡Atención!  "Términos 1-5" NO son lo mismo en Fringe (incluye astig. 0°)
-que en Noll (incluye astig. 45°).  SurfCalc usa Noll por defecto.
+que en Noll (incluye astig. 45°).
 
 Normalización (--norm): 'pico' (valor máximo 1 en el borde) o 'rms'
 (RMS unidad sobre el disco, normalización de Noll).  Sólo cambia el valor
@@ -107,7 +106,7 @@ Ejemplos
 # Apertura circular, ajustar los 5 primeros Fringe (Z0..Z4)
 python fem_mirror_analysis.py RESULTADOS.TXT --terms 0 1 2 3 4
 
-# Igual que SurfCalc "Noll Zernike, terms 1-5"
+# Los 5 primeros términos de Noll (Z1..Z5)
 python fem_mirror_analysis.py RESULTADOS.TXT --convention noll --terms 1 2 3 4 5
 
 # Espejo rectangular 120 x 80, 6 términos de Mahajan–Dai
@@ -516,7 +515,7 @@ def term_info(basis, t):
     """
     Información de un término para imprimir.
 
-    Devuelve (etiqueta, índice SurfCalc 1-based, orden, nombre).
+    Devuelve (etiqueta, índice 1-based de la convención, orden, nombre).
     En las bases ortonormales el nombre es el del Zernike del que procede.
     """
     n, m = term_nm(basis, t)
@@ -551,8 +550,7 @@ def build_design_matrix(basis, terms, coords, norm='pico'):
 def compute_bestfit_normal(coor):
     """
     Normal del plano best-fit de la nube de puntos (SVD / PCA): dirección de
-    mínima varianza.  Se orienta con componente Z ≥ 0 (mismo convenio que
-    SurfCalc: "every Normal Type resolves to an axis with a non-negative Z").
+    mínima varianza.  Se orienta con componente Z ≥ 0.
 
     Devuelve un vector unitario (3,).
     """
@@ -586,8 +584,7 @@ def rotation_to_z(normal):
 def to_local_frame(coor, disp):
     """
     Gira coordenadas y desplazamientos al sistema local de la superficie
-    (normal best-fit → +Z).  Equivale a "Normal Type: Best-fit Plane (Auto)"
-    de SurfCalc.  No traslada el origen, para que los giros de sólido rígido
+    (normal best-fit → +Z).  No traslada el origen, para que los giros de sólido rígido
     se sigan refiriendo al mismo punto que en el sistema global.
 
     Devuelve
@@ -1782,7 +1779,7 @@ def print_term_table(basis, nterms=21):
               'hexagonal': "Hexagonales de Mahajan–Dai (orden de Noll, 1-based)",
               'rectangular': "Rectangulares de Mahajan–Dai (orden de Noll, 1-based)"}
     print(f"\n  {titles[basis]}")
-    print(f"  {'Término':>8}  {'SurfCalc #':>10}  {'Orden':>12}  Nombre")
+    print(f"  {'Término':>8}  {'Nº 1-based':>10}  {'Orden':>12}  Nombre")
     print(f"  {'-'*8:>8}  {'-'*10:>10}  {'-'*12:>12}  ------")
     for t in default_terms(basis, nterms):
         lab, sc, order, name = term_info(basis, t)
@@ -1817,7 +1814,7 @@ def format_fit_table(basis, terms, coeffs, contrib=None):
             row += (f"  {contrib[0][k]:>11.4e}  {contrib[1][k]:>11.4e}"
                     f"  {contrib[2][k]:>11.4e}")
         lines.append(row + "  " + name)
-    lines.append("  # = índice SurfCalc (1-based).  Aporte RMS: contribución del término al"
+    lines.append("  # = índice 1-based de la convención.  Aporte RMS: contribución del término al"
                  " RMS, independiente")
     lines.append("  del número de términos (Gram–Schmidt sobre los nodos).  RMS/PV resid.:"
                  " tras quitar hasta ese término.")
@@ -2474,7 +2471,7 @@ def main():
         "--frame", choices=["global", "bestfit"], default="global",
         help="Sistema de referencia: 'global' (Z del fichero = eje óptico, como "
              "el MATLAB original) o 'bestfit' (girar a la normal del plano "
-             "best-fit, como SurfCalc 'Best-fit Plane (Auto)').  No usar "
+             "best-fit).  No usar "
              "'bestfit' con modelos parciales de espejos curvos ni segmentos "
              "fuera de eje.  Default: global")
     parser.add_argument(
@@ -2525,7 +2522,7 @@ def main():
     parser.add_argument(
         "--no-wls", action="store_true",
         help="Ajuste por LS ordinario en vez de WLS ponderado por área "
-             "(por defecto WLS, como SurfCalc).")
+             "(por defecto WLS).")
     parser.add_argument("--no-zernike", action="store_true",
                         help="Omitir el ajuste polinómico")
     parser.add_argument("--plot", action="store_true",

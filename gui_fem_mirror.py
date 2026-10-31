@@ -31,7 +31,7 @@ APERTURES_ENABLED = tuple(APERTURE_KEYS)
 
 BASIS_TEXT = {
     'Circular': ("Base: Zernike circular. Fringe 1-5 incluye astig. 0°; Noll 1-5 incluye "
-                 "astig. 45° (SurfCalc usa Noll por defecto)."),
+                 "astig. 45°."),
     'Anular': ("Base: Zernike anulares de Mahajan (1981), ortonormales sobre el anillo; "
                "orden de Noll (A1 pistón, A2-A3 tilts, A4 desenfoque…)."),
     'Hexagonal': ("Base: ortonormales hexagonales de Mahajan–Dai (2006); orden de Noll "

@@ -141,8 +141,8 @@ TXT = {
         'contrib': "Aporte RMS [{u}]", 'rms_after': "RMS residual [{u}]",
         'contrib_note': ("Aporte RMS: contribución de cada término al RMS, independiente del "
                          "número de términos ajustados (Gram–Schmidt sobre los nodos). RMS "
-                         "residual: tras eliminar hasta ese término. Nº: índice en la "
-                         "convención de la base (equivalente al de SurfCalc)."),
+                         "residual: tras eliminar hasta ese término. Nº: índice 1-based "
+                         "en la convención de la base."),
         'leg_max': "Máx.", 'leg_min': "Mín.", 'leg_ap': "Apertura",
         'n_reduction': "Eliminar los {n} términos reduce el RMS un {p:.1f} % "
                        "(de {a} a {b}).",
@@ -282,8 +282,8 @@ TXT = {
         'contrib': "RMS contribution [{u}]", 'rms_after': "Residual RMS [{u}]",
         'contrib_note': ("RMS contribution: contribution of each term to the RMS, independent "
                          "of the number of fitted terms (Gram–Schmidt over the nodes). "
-                         "Residual RMS: after removing up to that term. No.: index in the "
-                         "basis convention (same as SurfCalc)."),
+                         "Residual RMS: after removing up to that term. No.: 1-based index "
+                         "in the basis convention."),
         'leg_max': "Max.", 'leg_min': "Min.", 'leg_ap': "Aperture",
         'n_reduction': "Removing the {n} terms reduces the RMS by {p:.1f} % "
                        "(from {a} to {b}).",
